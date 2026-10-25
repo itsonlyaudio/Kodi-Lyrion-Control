@@ -12,7 +12,7 @@ enable **Lyrion** in Kodi. For installation from ZIP, the archive must contain
 the add-on folder at its root, with `addon.xml` inside that folder:
 
 ```text
-plugin.audio.lyrion-1.4.12-kodi21.zip
+plugin.audio.lyrion-1.4.18-kodi21.zip
 └── plugin.audio.lyrion/
     ├── addon.xml
     ├── default.py
@@ -51,6 +51,10 @@ name and selected player name when available. Refresh dispatch has a single
 Kodi-wide owner so stale add-on instances cannot issue competing status requests.
 Playback and volume commands are sent without waiting for an extra status
 request; the regular refresh updates the display afterward.
+Kodi GUI sounds are muted while the add-on screen is active and the previous
+GUI-sound mode is restored when Kodi leaves the screen, including through an
+external remote. Playback status continues refreshing in the background. This
+does not affect music playback or volume.
 The playlist opens around the current track and loads additional tracks when
 you navigate to the top or bottom of the loaded range. Selection continues into
 newly loaded tracks without rebuilding the existing list when crossing a page

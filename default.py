@@ -21,6 +21,7 @@ HANDLE = int(sys.argv[1])
 PLAYLIST_CONTROL_ID = 300
 REFRESH_CONTROL_ID = 104
 PLAYLIST_PAGE_SIZE = 100
+GUI_SOUND_MODE_SETTING = "audiooutput.guisoundmode"
 PROGRESS_LEFT = 105 + 590
 PROGRESS_TOP = 70 + 365
 PROGRESS_WIDTH = 1120
@@ -346,9 +347,31 @@ def playlist_item_label(track, is_current):
     return "{}  -  {}".format(title, artist) if artist else title
 
 
+def kodi_jsonrpc(method, params):
+    request = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "params": params,
+        "id": 1,
+    }
+    try:
+        response = json.loads(xbmc.executeJSONRPC(json.dumps(request)))
+    except (TypeError, ValueError, RuntimeError) as exc:
+        raise RuntimeError("Kodi JSON-RPC {} request failed: {}.".format(method, exc)) from exc
+    if not isinstance(response, dict):
+        raise RuntimeError("Kodi returned an invalid JSON-RPC response for {}.".format(method))
+    if "error" in response:
+        raise RuntimeError(
+            "Kodi JSON-RPC {} failed: {}.".format(method, response["error"])
+        )
+    return response.get("result")
+
+
 class LyrionWindow(xbmcgui.WindowXML):
     def onInit(self):
         self.client = None
+        self.original_gui_sound_mode = None
+        self.player_window_id = None
         self.refresh_stop = threading.Event()
         self.refresh_thread = None
         self.refresh_owner_token = uuid.uuid4().hex
@@ -388,6 +411,29 @@ class LyrionWindow(xbmcgui.WindowXML):
             ),
             xbmc.LOGINFO,
         )
+        try:
+            self.player_window_id = self.get_active_window_id()
+        except RuntimeError as exc:
+            self.player_window_id = None
+            xbmc.log(
+                "Lyrion: could not identify the player window during initialization: "
+                "{}.".format(exc),
+                xbmc.LOGWARNING,
+            )
+        if self.player_window_id is None:
+            xbmc.log(
+                "Lyrion: could not identify the player window during initialization; "
+                "GUI sounds will remain muted until the window closes.",
+                xbmc.LOGWARNING,
+            )
+        else:
+            xbmc.log(
+                "Lyrion: identified active player window ID {}.".format(
+                    self.player_window_id
+                ),
+                xbmc.LOGINFO,
+            )
+        self.mute_gui_sounds()
         try:
             self.client = LyrionClient()
             self.refresh_status()
@@ -493,12 +539,74 @@ class LyrionWindow(xbmcgui.WindowXML):
 
     def exit_addon(self):
         xbmc.log("Lyrion: Exit control activated.", xbmc.LOGINFO)
+        self.restore_gui_sounds()
         self.release_refresh_ownership()
         xbmc.executebuiltin("ReplaceWindow(Home)")
+
+    def mute_gui_sounds(self):
+        try:
+            response = kodi_jsonrpc(
+                "Settings.GetSettingValue",
+                {"setting": GUI_SOUND_MODE_SETTING},
+            )
+            original_mode = response.get("value") if isinstance(response, dict) else None
+            if not isinstance(original_mode, int) or original_mode not in (0, 1, 2):
+                raise RuntimeError("Kodi returned an invalid GUI sound mode.")
+            if original_mode != 0:
+                result = kodi_jsonrpc(
+                    "Settings.SetSettingValue",
+                    {"setting": GUI_SOUND_MODE_SETTING, "value": 0},
+                )
+                if result is not True:
+                    raise RuntimeError("Kodi did not accept the GUI sound setting change.")
+                self.original_gui_sound_mode = original_mode
+        except RuntimeError as exc:
+            xbmc.log(
+                "Lyrion: could not mute Kodi GUI sounds: {}".format(exc),
+                xbmc.LOGWARNING,
+            )
+
+    def restore_gui_sounds(self):
+        if self.original_gui_sound_mode is None:
+            return
+        original_mode = self.original_gui_sound_mode
+        try:
+            result = kodi_jsonrpc(
+                "Settings.SetSettingValue",
+                {
+                    "setting": GUI_SOUND_MODE_SETTING,
+                    "value": original_mode,
+                },
+            )
+            if result is not True:
+                raise RuntimeError("Kodi did not accept the GUI sound setting restore.")
+            self.original_gui_sound_mode = None
+            xbmc.log("Lyrion: restored Kodi GUI sound mode {}.".format(original_mode), xbmc.LOGINFO)
+        except RuntimeError as exc:
+            xbmc.log(
+                "Lyrion: could not restore Kodi GUI sounds: {}".format(exc),
+                xbmc.LOGERROR,
+            )
+
+    def get_active_window_id(self):
+        response = kodi_jsonrpc(
+            "GUI.GetProperties",
+            {"properties": ["currentwindow"]},
+        )
+        active_window = (
+            response.get("currentwindow") if isinstance(response, dict) else None
+        )
+        if not isinstance(active_window, dict):
+            raise RuntimeError("Kodi did not return the active window.")
+        try:
+            return int(active_window["id"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Kodi returned an invalid active window ID.") from exc
 
     def onClose(self):
         self.stop_refresh_loop()
         self.release_refresh_ownership()
+        self.restore_gui_sounds()
 
     def is_refresh_owner(self):
         return (
@@ -537,6 +645,23 @@ class LyrionWindow(xbmcgui.WindowXML):
                 break
             if time.monotonic() < next_refresh:
                 continue
+            window_is_active = self.player_window_id is None
+            if self.player_window_id is not None:
+                try:
+                    window_is_active = (
+                        self.get_active_window_id() == self.player_window_id
+                    )
+                except RuntimeError as exc:
+                    xbmc.log(
+                        "Lyrion: could not identify the active Kodi window: {}".format(
+                            exc
+                        ),
+                        xbmc.LOGWARNING,
+                    )
+            if not window_is_active:
+                self.restore_gui_sounds()
+            elif self.original_gui_sound_mode is None:
+                self.mute_gui_sounds()
             try:
                 xbmc.executebuiltin(
                     "SendClick({},{})".format(WINDOW_ID, REFRESH_CONTROL_ID),

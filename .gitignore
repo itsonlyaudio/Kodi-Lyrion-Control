@@ -1,0 +1,8 @@
+.DS_Store
+._*
+__MACOSX/
+__pycache__/
+*.py[cod]
+kodi.log
+plugin.audio.lyrion-*-kodi21.zip
+!plugin.audio.lyrion-1.4.12-kodi21.zip

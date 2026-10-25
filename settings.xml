@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings version="1">
+  <section id="connection">
+    <category id="server" label="Lyrion server">
+      <setting id="auto_discover" type="bool" label="Discover server automatically" default="true"/>
+      <setting id="server_host" type="string" label="Server host (manual or fallback)" default=""/>
+      <setting id="server_port" type="integer" label="Server port (manual or fallback)" default="9000"/>
+      <setting id="player_id" type="string" label="Player ID (MAC address)" default=""/>
+      <setting id="username" type="string" label="Username (optional)" default=""/>
+      <setting id="password" type="string" label="Password (optional)" default="" option="hidden"/>
+    </category>
+  </section>
+</settings>

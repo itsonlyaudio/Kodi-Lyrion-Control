@@ -1,0 +1,849 @@
+import base64
+import json
+import math
+import socket
+import sys
+import threading
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import uuid
+
+import xbmc
+import xbmcaddon
+import xbmcgui
+import xbmcplugin
+
+
+ADDON = xbmcaddon.Addon()
+HANDLE = int(sys.argv[1])
+PLAYLIST_CONTROL_ID = 300
+REFRESH_CONTROL_ID = 104
+PLAYLIST_PAGE_SIZE = 100
+PROGRESS_LEFT = 105 + 590
+PROGRESS_TOP = 70 + 365
+PROGRESS_WIDTH = 1120
+PROGRESS_HEIGHT = 36
+WINDOW_ID = 11000
+REFRESH_OWNER_PROPERTY = "LyrionRefreshOwner"
+
+
+def parse_discovery_response(packet, address):
+    if not packet.startswith(b"E"):
+        return None
+
+    fields = {}
+    offset = 1
+    while offset < len(packet):
+        if len(packet) - offset < 5:
+            return None
+        key = packet[offset:offset + 4].decode("ascii", errors="ignore")
+        value_length = packet[offset + 4]
+        offset += 5
+        if len(packet) - offset < value_length:
+            return None
+        try:
+            fields[key] = packet[offset:offset + value_length].decode("utf-8")
+        except UnicodeDecodeError:
+            return None
+        offset += value_length
+
+    name = fields.get("NAME", "").strip()
+    try:
+        port = int(fields.get("JSON", "9000"))
+    except ValueError:
+        return None
+    if not name or not 1 <= port <= 65535:
+        return None
+    return {"name": name, "host": address, "port": port}
+
+
+def discover_servers(timeout=2.0):
+    request_packet = b"eIPAD\0NAME\0JSON\0UUID\0VERS\0"
+    servers = {}
+    sock = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.bind(("", 0))
+        sock.settimeout(0.25)
+        sock.sendto(request_packet, ("255.255.255.255", 3483))
+        deadline = time.monotonic() + timeout
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sock.settimeout(min(0.25, remaining))
+            try:
+                packet, source = sock.recvfrom(4096)
+            except socket.timeout:
+                continue
+            server = parse_discovery_response(packet, source[0])
+            if server:
+                servers[(server["host"], server["port"])] = server
+    except OSError as exc:
+        raise RuntimeError("Lyrion network discovery failed: {}.".format(exc)) from exc
+    finally:
+        if sock is not None:
+            sock.close()
+    return list(servers.values())
+
+
+class LyrionClient:
+    def __init__(self):
+        configured_host = ADDON.getSetting("server_host").strip()
+        port_value = ADDON.getSetting("server_port").strip()
+        self.player_id = ADDON.getSetting("player_id").strip()
+        username = ADDON.getSetting("username")
+        password = ADDON.getSetting("password")
+
+        # Kodi can return an empty value for an unset integer preference.
+        port_value = port_value or "9000"
+        try:
+            port = int(port_value)
+        except ValueError as exc:
+            raise ValueError("The Lyrion server port must be a number.") from exc
+        if not 1 <= port <= 65535:
+            raise ValueError("The Lyrion server port must be between 1 and 65535.")
+
+        auto_discover_setting = ADDON.getSetting("auto_discover").strip().lower()
+        auto_discover = auto_discover_setting != "false"
+        if auto_discover:
+            servers = discover_servers()
+            if len(servers) == 1:
+                host, port = servers[0]["host"], servers[0]["port"]
+                xbmc.log(
+                    "Lyrion: discovered {} at {}:{}".format(
+                        servers[0]["name"], host, port
+                    ),
+                    xbmc.LOGINFO,
+                )
+            elif len(servers) > 1:
+                labels = [
+                    "{} ({})".format(server["name"], server["host"])
+                    for server in servers
+                ]
+                selected = xbmcgui.Dialog().select("Select Lyrion server", labels)
+                if selected < 0:
+                    raise ValueError("No Lyrion server was selected.")
+                host, port = servers[selected]["host"], servers[selected]["port"]
+            elif configured_host:
+                host = configured_host
+                xbmc.log(
+                    "Lyrion: no servers discovered; using configured host {}.".format(host),
+                    xbmc.LOGWARNING,
+                )
+            else:
+                raise RuntimeError(
+                    "No Lyrion server was discovered. Check that Kodi and the server "
+                    "are on the same network, or set the server host manually."
+                )
+        else:
+            host = configured_host
+
+        if not host or "/" in host or "://" in host:
+            raise ValueError(
+                "Enter a server host name or IP address, or enable automatic discovery."
+            )
+        if ":" in host and not host.startswith("["):
+            host = "[" + host + "]"
+        self.base_url = "http://{}:{}".format(host, port)
+        self.endpoint = self.base_url + "/jsonrpc.js"
+        self.auth_header = None
+        if username:
+            token = base64.b64encode(
+                "{}:{}".format(username, password).encode("utf-8")
+            ).decode("ascii")
+            self.auth_header = "Basic " + token
+
+        self.player_name = self.player_id
+        if not self.player_id:
+            self.player_id, self.player_name = self.select_player()
+        else:
+            try:
+                self.player_name = self.find_player_name(self.player_id) or self.player_id
+            except RuntimeError as exc:
+                xbmc.log(
+                    "Lyrion: could not resolve selected player name: {}".format(exc),
+                    xbmc.LOGWARNING,
+                )
+        self.library_name = ""
+        try:
+            library = self.request(["pref", "libraryname", "?"])
+            if isinstance(library, dict):
+                self.library_name = str(library.get("_p2") or "").strip()
+        except RuntimeError as exc:
+            xbmc.log(
+                "Lyrion: could not read the music library name: {}".format(exc),
+                xbmc.LOGWARNING,
+            )
+
+    def request(self, command, player_id=None):
+        payload = {
+            "id": 1,
+            "method": "slim.request",
+            "params": [
+                self.player_id if player_id is None else player_id,
+                command,
+            ],
+        }
+        request = urllib.request.Request(
+            self.endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        if self.auth_header:
+            request.add_header("Authorization", self.auth_header)
+        try:
+            with urllib.request.urlopen(request, timeout=5) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError("Lyrion server returned HTTP {}.".format(exc.code)) from exc
+        except (urllib.error.URLError, TimeoutError) as exc:
+            raise RuntimeError("Could not connect to the Lyrion server: {}.".format(exc)) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("The Lyrion server returned an invalid JSON response.") from exc
+
+        if not isinstance(result, dict):
+            raise RuntimeError("The Lyrion server returned an invalid JSON response.")
+        if "error" in result:
+            raise RuntimeError("Lyrion server error: {}.".format(result["error"]))
+        return result.get("result", {})
+
+    def get_players(self):
+        result = self.request(
+            ["players", "0", "50", "playerid", "name", "model"],
+            player_id="",
+        )
+        players = result.get("players_loop", []) if isinstance(result, dict) else []
+        if isinstance(players, dict):
+            players = list(players.values())
+        if not isinstance(players, list):
+            players = []
+        players = [
+            player for player in players
+            if isinstance(player, dict)
+            and (player.get("playerid") or player.get("id"))
+        ]
+        return players
+
+    def find_player_name(self, player_id):
+        for player in self.get_players():
+            candidate_id = str(player.get("playerid") or player.get("id"))
+            if candidate_id.lower() == player_id.lower():
+                return str(player.get("name") or player_id)
+        return ""
+
+    def select_player(self):
+        players = self.get_players()
+        if not players:
+            raise RuntimeError(
+                "No players were returned by the Lyrion server. Check that a "
+                "player is connected, or enter its MAC address in the add-on settings."
+            )
+
+        if len(players) == 1:
+            selected = 0
+        else:
+            labels = [
+                "{} ({})".format(
+                    player.get("name") or "Unnamed player",
+                    player.get("playerid") or player.get("id"),
+                )
+                for player in players
+            ]
+            selected = xbmcgui.Dialog().select("Select Lyrion player", labels)
+            if selected < 0:
+                raise ValueError("No Lyrion player was selected.")
+
+        player_id = str(
+            players[selected].get("playerid") or players[selected].get("id")
+        )
+        ADDON.setSetting("player_id", player_id)
+        return player_id, str(players[selected].get("name") or player_id)
+
+    def status(self, start=0, count=PLAYLIST_PAGE_SIZE):
+        result = self.request([
+            "status",
+            str(start),
+            str(count),
+            "tags:cgaldyrtK",
+        ])
+        if isinstance(result, dict):
+            result["_playlist_start"] = start
+        return result
+
+    def volume(self):
+        result = self.request(["mixer", "volume", "?"])
+        if not isinstance(result, dict):
+            raise RuntimeError("The Lyrion server returned an invalid volume response.")
+        value = next(
+            (
+                result[key]
+                for key in ("_p2", "_volume", "volume", "mixer_volume", "mixer volume")
+                if key in result
+            ),
+            None,
+        )
+        try:
+            volume = int(float(value))
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError(
+                "The Lyrion server did not return a numeric volume percentage."
+            ) from exc
+        if not 0 <= volume <= 100:
+            raise RuntimeError("The Lyrion server returned a volume outside 0-100%.")
+        return volume
+
+    def command(self, *parts):
+        self.request(list(parts))
+
+    def artwork_url(self, track):
+        artwork = track.get("artwork_url")
+        if isinstance(artwork, str) and artwork:
+            if artwork.startswith(("http://", "https://")):
+                return artwork
+            return urllib.parse.urljoin(self.base_url, artwork)
+        cover_id = track.get("coverid") or track.get("id")
+        if cover_id is None:
+            return ""
+        return "{}/music/{}/cover.jpg".format(
+            self.base_url, urllib.parse.quote(str(cover_id), safe="")
+        )
+
+
+def format_time(value):
+    try:
+        seconds = max(0, int(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        seconds = 0
+    return "{}:{:02d}".format(seconds // 60, seconds % 60)
+
+
+def format_volume_db(volume):
+    if volume == 0:
+        return "-inf dB"
+    return "{:.1f} dB".format(20 * math.log10(volume / 100.0))
+
+
+def get_playlist(data):
+    playlist = data.get("playlist_loop", [])
+    if isinstance(playlist, dict):
+        playlist = list(playlist.values())
+    if not isinstance(playlist, list):
+        return []
+    return [item for item in playlist if isinstance(item, dict)]
+
+
+def playlist_item_label(track, is_current):
+    title = track.get("title") or "Unknown title"
+    artist = track.get("artist") or ""
+    if is_current:
+        title = "[B]{}[/B]".format(title)
+        artist = "[B]{}[/B]".format(artist) if artist else ""
+    return "{}  -  {}".format(title, artist) if artist else title
+
+
+class LyrionWindow(xbmcgui.WindowXML):
+    def onInit(self):
+        self.client = None
+        self.refresh_stop = threading.Event()
+        self.refresh_thread = None
+        self.refresh_owner_token = uuid.uuid4().hex
+        self.kodi_window = xbmcgui.Window(10000)
+        self.refresh_dispatch_count = 0
+        self.refresh_click_count = 0
+        self.playlist_items = []
+        self.current_playlist_index = None
+        self.playlist_tracks = {}
+        self.playlist_start = 0
+        self.playlist_total = 0
+        self.last_volume_warning_at = 0.0
+        progress_path = "{}/resources/skins/Default/1080i/progress-fill.png".format(
+            ADDON.getAddonInfo("path")
+        )
+        self.progress_fill = xbmcgui.ControlImage(
+            PROGRESS_LEFT,
+            PROGRESS_TOP,
+            1,
+            PROGRESS_HEIGHT,
+            progress_path,
+        )
+        self.addControl(self.progress_fill)
+        self.progress_fill.setVisible(False)
+        previous_owner = self.kodi_window.getProperty(REFRESH_OWNER_PROPERTY)
+        self.kodi_window.setProperty(
+            REFRESH_OWNER_PROPERTY, self.refresh_owner_token
+        )
+        if previous_owner:
+            xbmc.log(
+                "Lyrion: replacing refresh owner {}.".format(previous_owner[:8]),
+                xbmc.LOGWARNING,
+            )
+        xbmc.log(
+            "Lyrion: claimed refresh ownership {}.".format(
+                self.refresh_owner_token[:8]
+            ),
+            xbmc.LOGINFO,
+        )
+        try:
+            self.client = LyrionClient()
+            self.refresh_status()
+            self.start_refresh_loop()
+        except (RuntimeError, ValueError) as exc:
+            self.setProperty("Error", str(exc))
+
+    def onClick(self, control_id):
+        if control_id != 105 and not self.is_refresh_owner():
+            return
+        if control_id == 105:
+            self.exit_addon()
+            return
+        if self.client is None:
+            xbmc.log(
+                "Lyrion: ignored control {} because no server connection is available.".format(
+                    control_id
+                ),
+                xbmc.LOGWARNING,
+            )
+            return
+        if control_id == 100:
+            self.send_command("playlist", "index", "-1")
+        elif control_id == 101:
+            if self.getProperty("Mode").lower() == "play":
+                self.send_command("pause", "1")
+            else:
+                self.send_command("play")
+        elif control_id == 103:
+            self.send_command("playlist", "index", "+1")
+        elif control_id == REFRESH_CONTROL_ID:
+            self.refresh_click_count += 1
+            if self.refresh_click_count == 1 or self.refresh_click_count % 10 == 0:
+                xbmc.log(
+                    "Lyrion: refresh control received click #{}.".format(
+                        self.refresh_click_count
+                    ),
+                    xbmc.LOGINFO,
+                )
+            self.refresh_status()
+        elif control_id == PLAYLIST_CONTROL_ID:
+            list_control = self.getControl(PLAYLIST_CONTROL_ID)
+            item = list_control.getSelectedItem()
+            if item is not None:
+                try:
+                    index = int(item.getProperty("playlist_index"))
+                    self.send_command("playlist", "index", str(index))
+                except ValueError:
+                    self.setProperty("Error", "Could not select that playlist track.")
+
+    def onAction(self, action):
+        action_id = action.getId()
+        if action_id not in (9, 10) and not self.is_refresh_owner():
+            return
+        if action_id in (3, 4) and self.getFocusId() == PLAYLIST_CONTROL_ID:
+            control = self.getControl(PLAYLIST_CONTROL_ID)
+            selected_position = control.getSelectedPosition()
+            if action_id == 3 and selected_position == 0:
+                if self.playlist_tracks and min(self.playlist_tracks) > 0:
+                    self.load_playlist_page("previous")
+            elif action_id == 4 and selected_position == len(self.playlist_items) - 1:
+                if (
+                    self.playlist_tracks
+                    and max(self.playlist_tracks) + 1 < self.playlist_total
+                ):
+                    self.load_playlist_page("next")
+        elif action_id == 14:
+            self.onClick(103)
+        elif action_id == 15:
+            self.onClick(100)
+        elif action_id == 12:
+            self.send_command("pause", "1")
+        elif action_id == 79:
+            self.send_command("play")
+        elif action_id == 117:
+            self.onClick(101)
+        elif action_id == 88:
+            self.change_lyrion_volume("+5")
+        elif action_id == 89:
+            self.change_lyrion_volume("-5")
+        elif action_id in (9, 10):
+            self.exit_addon()
+
+    def change_lyrion_volume(self, change):
+        if self.client is None:
+            message = "Cannot change Lyrion volume because no server connection is available."
+            self.setProperty("Error", message)
+            xbmc.log("Lyrion: " + message, xbmc.LOGWARNING)
+            return
+        try:
+            self.client.command("mixer", "volume", change)
+            xbmc.log(
+                "Lyrion: sent volume change {}.".format(change),
+                xbmc.LOGINFO,
+            )
+            self.setProperty("Error", "")
+        except (RuntimeError, ValueError) as exc:
+            self.setProperty("Error", str(exc))
+            xbmc.log(
+                "Lyrion: volume change {} failed: {}".format(change, exc),
+                xbmc.LOGERROR,
+            )
+
+    def exit_addon(self):
+        xbmc.log("Lyrion: Exit control activated.", xbmc.LOGINFO)
+        self.release_refresh_ownership()
+        xbmc.executebuiltin("ReplaceWindow(Home)")
+
+    def onClose(self):
+        self.stop_refresh_loop()
+        self.release_refresh_ownership()
+
+    def is_refresh_owner(self):
+        return (
+            self.kodi_window.getProperty(REFRESH_OWNER_PROPERTY)
+            == self.refresh_owner_token
+        )
+
+    def release_refresh_ownership(self):
+        if self.is_refresh_owner():
+            self.kodi_window.clearProperty(REFRESH_OWNER_PROPERTY)
+
+    def start_refresh_loop(self):
+        if self.refresh_thread is not None and self.refresh_thread.is_alive():
+            return
+        self.refresh_stop.clear()
+        self.refresh_thread = threading.Thread(
+            target=self.refresh_loop,
+            name="LyrionPlaybackRefresh",
+            daemon=True,
+        )
+        self.refresh_thread.start()
+        xbmc.log("Lyrion: automatic refresh loop started.", xbmc.LOGINFO)
+
+    def refresh_loop(self):
+        next_refresh = time.monotonic() + 1.0
+        while not self.refresh_stop.is_set():
+            xbmc.sleep(50)
+            if self.refresh_stop.is_set():
+                break
+            if not self.is_refresh_owner():
+                xbmc.log(
+                    "Lyrion: stopping refresh loop after ownership was transferred.",
+                    xbmc.LOGINFO,
+                )
+                self.refresh_stop.set()
+                break
+            if time.monotonic() < next_refresh:
+                continue
+            try:
+                xbmc.executebuiltin(
+                    "SendClick({},{})".format(WINDOW_ID, REFRESH_CONTROL_ID),
+                    True,
+                )
+                self.refresh_dispatch_count += 1
+                if (
+                    self.refresh_dispatch_count == 1
+                    or self.refresh_dispatch_count % 10 == 0
+                ):
+                    xbmc.log(
+                        "Lyrion: dispatched refresh click #{}.".format(
+                            self.refresh_dispatch_count
+                        ),
+                        xbmc.LOGINFO,
+                    )
+            except RuntimeError as exc:
+                xbmc.log(
+                    "Lyrion: automatic refresh click failed: {}".format(exc),
+                    xbmc.LOGERROR,
+                )
+            next_refresh = time.monotonic() + 1.0
+
+    def stop_refresh_loop(self):
+        self.refresh_stop.set()
+
+    def send_command(self, *command):
+        if self.client is None:
+            message = "Cannot send a Lyrion command because no server connection is available."
+            self.setProperty("Error", message)
+            xbmc.log("Lyrion: " + message, xbmc.LOGWARNING)
+            return
+        try:
+            self.client.command(*command)
+            self.setProperty("Error", "")
+        except (RuntimeError, ValueError) as exc:
+            self.setProperty("Error", str(exc))
+            xbmc.log("Lyrion: command failed: {}".format(exc), xbmc.LOGWARNING)
+
+    def refresh_status(self):
+        if self.client is None:
+            return
+        try:
+            data = self.client.status(self.playlist_start)
+            try:
+                current_index = int(data.get("playlist_cur_index", -1))
+            except (TypeError, ValueError):
+                current_index = -1
+            if (
+                current_index >= 0
+                and current_index not in self.playlist_tracks
+                and (
+                    current_index < self.playlist_start
+                    or current_index >= self.playlist_start + len(get_playlist(data))
+                )
+            ):
+                try:
+                    total = max(
+                        0, int(data.get("playlist_tracks", current_index + 1))
+                    )
+                except (TypeError, ValueError):
+                    total = current_index + 1
+                start = max(
+                    0,
+                    min(
+                        current_index - PLAYLIST_PAGE_SIZE // 2,
+                        max(0, total - PLAYLIST_PAGE_SIZE),
+                    ),
+                )
+                data = self.client.status(start)
+                self.playlist_tracks.clear()
+                self.playlist_start = start
+            self.update_ui(data)
+            try:
+                volume = self.client.volume()
+            except RuntimeError as exc:
+                self.setProperty("Volume", "Volume unavailable")
+                now = time.monotonic()
+                if now - self.last_volume_warning_at >= 60:
+                    xbmc.log(
+                        "Lyrion: could not read current volume: {}".format(exc),
+                        xbmc.LOGWARNING,
+                    )
+                    self.last_volume_warning_at = now
+            else:
+                self.setProperty("Volume", "Volume {}".format(format_volume_db(volume)))
+            self.setProperty("Error", "")
+        except (RuntimeError, ValueError) as exc:
+            self.setProperty("Error", str(exc))
+            xbmc.log(
+                "Lyrion: playback refresh failed: {}".format(exc),
+                xbmc.LOGWARNING,
+            )
+
+    def load_playlist_page(self, direction):
+        if self.client is None or not self.playlist_tracks or self.playlist_total <= 0:
+            return
+        if direction == "previous":
+            first_index = min(self.playlist_tracks)
+            if first_index <= 0:
+                return
+            start = max(0, first_index - PLAYLIST_PAGE_SIZE)
+            count = first_index - start
+        elif direction == "next":
+            last_index = max(self.playlist_tracks)
+            start = last_index + 1
+            if start >= self.playlist_total:
+                return
+            count = min(PLAYLIST_PAGE_SIZE, self.playlist_total - start)
+        else:
+            raise ValueError("Unknown playlist page direction: {}.".format(direction))
+
+        try:
+            data = self.client.status(start, count)
+            page_tracks = get_playlist(data)
+            if direction == "previous":
+                target_index = start + len(page_tracks) - 1
+            else:
+                target_index = start
+            self.update_ui(data, selection_index=target_index)
+            self.playlist_start = min(self.playlist_tracks)
+        except (RuntimeError, ValueError) as exc:
+            self.setProperty("Error", str(exc))
+            xbmc.log(
+                "Lyrion: could not load the {} playlist page: {}".format(
+                    direction, exc
+                ),
+                xbmc.LOGWARNING,
+            )
+
+    def update_ui(self, data, selection_index=None):
+        if not isinstance(data, dict):
+            raise RuntimeError("The Lyrion server returned an unexpected status response.")
+        playlist = get_playlist(data)
+        try:
+            page_start = max(0, int(data.get("_playlist_start", self.playlist_start)))
+        except (TypeError, ValueError):
+            page_start = self.playlist_start
+        for offset, track in enumerate(playlist):
+            self.playlist_tracks[page_start + offset] = track
+        try:
+            current_index = int(data.get("playlist_cur_index", -1))
+        except (TypeError, ValueError):
+            current_index = -1
+        current = self.playlist_tracks.get(current_index, {})
+        title = current.get("title") or "Nothing playing"
+        artist = current.get("artist") or ""
+        album = current.get("album") or ""
+        mode = data.get("mode", "stop")
+        try:
+            position = max(0.0, float(data.get("time", 0)))
+        except (TypeError, ValueError, OverflowError):
+            position = 0.0
+        try:
+            duration = max(0.0, float(current.get("duration", data.get("duration", 0))))
+        except (TypeError, ValueError, OverflowError):
+            duration = 0.0
+        progress = min(100.0, position * 100.0 / duration) if duration else 0.0
+
+        self.setProperty("Title", str(title))
+        self.setProperty("Artist", str(artist))
+        self.setProperty("Album", str(album))
+        self.setProperty("Renderer", str(self.client.player_name))
+        header = "Lyrion Music Server"
+        if self.client.library_name:
+            header += " - {}".format(self.client.library_name)
+        if self.client.player_name:
+            header += " on {}".format(self.client.player_name)
+        self.setProperty("Header", header)
+        self.setProperty(
+            "PlaylistCount",
+            str(data.get("playlist_tracks", len(self.playlist_tracks))),
+        )
+        try:
+            self.playlist_total = max(
+                0, int(data.get("playlist_tracks", len(self.playlist_tracks)))
+            )
+        except (TypeError, ValueError):
+            self.playlist_total = len(self.playlist_tracks)
+        self.setProperty("Mode", str(mode))
+        mode = str(mode).lower()
+        if mode == "play":
+            play_pause_label = "[B][COLOR FF00FF00]▶[/COLOR][/B]"
+        elif mode in ("pause", "paused"):
+            play_pause_label = "[B][COLOR FFFFCC00]||[/COLOR][/B]"
+        else:
+            play_pause_label = "▶"
+        self.setProperty("PlayPauseButtonLabel", play_pause_label)
+        self.setProperty("Position", format_time(position))
+        self.setProperty("Duration", format_time(duration))
+        fill_width = round(PROGRESS_WIDTH * progress / 100.0)
+        if fill_width > 0:
+            self.progress_fill.setWidth(fill_width)
+            self.progress_fill.setVisible(duration > 0)
+        else:
+            self.progress_fill.setVisible(False)
+        self.setProperty("Artwork", self.client.artwork_url(current))
+        visible_tracks = sorted(self.playlist_tracks.items())
+        snapshot = [
+            (index, str(track.get("title", "Unknown title")),
+             str(track.get("artist", "")),
+             str(track.get("album", "")))
+            for index, track in visible_tracks
+        ]
+        playlist_changed = snapshot != self.playlist_items
+        current_track_changed = current_index != self.current_playlist_index
+        selected_index = None
+        control = self.getControl(PLAYLIST_CONTROL_ID)
+        try:
+            selected_item = control.getSelectedItem()
+            if selected_item is not None:
+                selected_index = int(selected_item.getProperty("playlist_index"))
+        except (RuntimeError, TypeError, ValueError):
+            pass
+        if playlist_changed:
+            can_append = (
+                current_index == self.current_playlist_index
+                and len(snapshot) > len(self.playlist_items)
+                and snapshot[:len(self.playlist_items)] == self.playlist_items
+            )
+            if not can_append:
+                control.reset()
+            tracks_to_add = (
+                visible_tracks[len(self.playlist_items):]
+                if can_append
+                else visible_tracks
+            )
+            for index, track in tracks_to_add:
+                item = xbmcgui.ListItem(
+                    label=playlist_item_label(track, index == current_index)
+                )
+                item.setProperty("playlist_index", str(index))
+                control.addItem(item)
+            self.playlist_items = snapshot
+        elif current_track_changed:
+            positions = {
+                index: position for position, (index, _) in enumerate(visible_tracks)
+            }
+            for index in {self.current_playlist_index, current_index}:
+                if index in positions:
+                    control.getListItem(positions[index]).setLabel(
+                        playlist_item_label(
+                            self.playlist_tracks[index], index == current_index
+                        )
+                    )
+        if selection_index is not None:
+            target_index = selection_index
+        elif current_track_changed:
+            target_index = current_index
+        else:
+            target_index = selected_index
+        if target_index not in self.playlist_tracks:
+            target_index = current_index
+        if (
+            playlist_changed
+            or current_track_changed
+            or selection_index is not None
+        ) and (
+            target_index in self.playlist_tracks
+        ):
+            control.selectItem(
+                next(
+                    position for position, (index, _) in enumerate(visible_tracks)
+                    if index == target_index
+                )
+            )
+        self.current_playlist_index = current_index
+
+
+def run_player():
+    window = LyrionWindow(
+        "LyrionWindow.xml",
+        ADDON.getAddonInfo("path"),
+        "Default",
+        "1080i",
+    )
+    window.doModal()
+    del window
+
+
+def main():
+    query = urllib.parse.parse_qs(sys.argv[2].lstrip("?")) if len(sys.argv) > 2 else {}
+    action = query.get("action", [""])[0]
+    commands = {
+        "previous": ("playlist", "index", "-1"),
+        "next": ("playlist", "index", "+1"),
+        "play": ("play",),
+        "pause": ("pause", "1"),
+        "volumeup": ("mixer", "volume", "+5"),
+        "volumedown": ("mixer", "volume", "-5"),
+        "volumeup": ("mixer", "volume", "+5"),
+        "volumedown": ("mixer", "volume", "-5"),
+    }
+    if action:
+        try:
+            if action not in commands:
+                raise ValueError("Unknown Lyrion action: {}.".format(action))
+            LyrionClient().command(*commands[action])
+        except (RuntimeError, ValueError) as exc:
+            xbmcgui.Dialog().notification(
+                "Lyrion", str(exc), xbmcgui.NOTIFICATION_ERROR
+            )
+        return
+
+    xbmcplugin.endOfDirectory(HANDLE, succeeded=True, cacheToDisc=False)
+    run_player()
+
+
+if __name__ == "__main__":
+    main()

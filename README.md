@@ -1,4 +1,4 @@
-# Lyrion for Kodi
+# Kodi-Lyrion-Control
 
 This Kodi audio add-on provides a remote-friendly screen for controlling a
 player on a Lyrion Music Server (formerly Logitech Media Server). It displays

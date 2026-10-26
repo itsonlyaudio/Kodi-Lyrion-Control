@@ -825,16 +825,18 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty("Artist", str(artist))
         self.setProperty("Album", str(album))
         self.setProperty("Renderer", str(self.client.player_name))
-        header = "Lyrion Music Server"
+        header_parts = []
         if self.client.library_name:
-            header += " - {}".format(self.client.library_name)
+            header_parts.append(self.client.library_name)
         if self.client.player_name:
-            header += " on {}".format(self.client.player_name)
-        self.setProperty("Header", header)
+            header_parts.append(self.client.player_name)
+        self.setProperty("Header", " - ".join(header_parts))
         self.setProperty(
             "PlaylistCount",
             str(data.get("playlist_tracks", len(self.playlist_tracks))),
         )
+        playlist_name = str(data.get("playlist_name") or "").strip()
+        self.setProperty("PlaylistName", playlist_name or "Playlist")
         try:
             self.playlist_total = max(
                 0, int(data.get("playlist_tracks", len(self.playlist_tracks)))

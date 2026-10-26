@@ -19,10 +19,18 @@
       <top>70</top>
       <width>1710</width>
       <height>940</height>
-      <control type="label">
+      <control type="image">
         <left>0</left>
+        <top>2</top>
+        <width>56</width>
+        <height>56</height>
+        <aspectratio>keep</aspectratio>
+        <texture>special://home/addons/plugin.audio.lyrion/resources/lyrion-logo.png</texture>
+      </control>
+      <control type="label">
+        <left>72</left>
         <top>0</top>
-        <width>1320</width>
+        <width>1248</width>
         <height>62</height>
         <font>font36</font>
         <label>$INFO[Window.Property(Header)]</label>
@@ -188,7 +196,7 @@
         <width>1000</width>
         <height>42</height>
         <font>font20</font>
-        <label>Playlist ($INFO[Window.Property(PlaylistCount)] tracks)</label>
+        <label>$INFO[Window.Property(PlaylistName)] ($INFO[Window.Property(PlaylistCount)] tracks)</label>
         <textcolor>white</textcolor>
       </control>
       <control type="image">

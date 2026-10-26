@@ -12,7 +12,7 @@ enable **Lyrion** in Kodi. For installation from ZIP, the archive must contain
 the add-on folder at its root, with `addon.xml` inside that folder:
 
 ```text
-plugin.audio.lyrion-1.4.18-kodi21.zip
+plugin.audio.lyrion-1.4.23-kodi21.zip
 └── plugin.audio.lyrion/
     ├── addon.xml
     ├── default.py
@@ -61,6 +61,10 @@ newly loaded tracks without rebuilding the existing list when crossing a page
 boundary. Selecting a track plays it without moving or recentering the list.
 When playback changes from the Previous/Next controls or another app, the list
 selection follows the playing track.
+The playlist heading uses the current playlist's name when Lyrion provides one,
+and falls back to “Playlist” when the name is unavailable.
+The screen header uses the Lyrion logo alongside the music library and player
+names when available.
 
 ## Controls
 

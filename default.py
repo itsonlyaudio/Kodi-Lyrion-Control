@@ -1029,14 +1029,12 @@ class LyrionWindow(xbmcgui.WindowXML):
                 return
             start = max(0, first_index - PLAYLIST_PAGE_SIZE)
             count = first_index - start
-        elif direction == "next":
+        else:
             last_index = max(self.playlist_tracks)
             start = last_index + 1
             if start >= self.playlist_total:
                 return
             count = min(PLAYLIST_PAGE_SIZE, self.playlist_total - start)
-        else:
-            raise ValueError("Unknown playlist page direction: {}.".format(direction))
 
         try:
             data = self.client.status(start, count)
@@ -1092,7 +1090,6 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty("Title", str(title))
         self.setProperty("Artist", str(artist))
         self.setProperty("Album", str(album))
-        self.setProperty("Renderer", str(self.client.player_name))
         library_name = str(self.client.library_name or "").strip()
         player_name = str(self.client.player_name or "").strip()
         if library_name and player_name:
@@ -1100,8 +1097,6 @@ class LyrionWindow(xbmcgui.WindowXML):
         else:
             header = library_name or player_name
         self.setProperty("Header", header)
-        playlist_name = str(data.get("playlist_name") or "").strip()
-        self.setProperty("PlaylistName", playlist_name or "Playlist")
         try:
             self.playlist_total = max(
                 0, int(data.get("playlist_tracks", len(self.playlist_tracks)))
@@ -1112,20 +1107,15 @@ class LyrionWindow(xbmcgui.WindowXML):
             del self.playlist_tracks[index]
         if self.playlist_start >= self.playlist_total:
             self.playlist_start = 0
-        self.setProperty("PlaylistCount", str(self.playlist_total))
-        self.setProperty(
-            "PlaylistCountLabel", "track" if self.playlist_total == 1 else "tracks"
-        )
-        playlist_timestamp = data.get("playlist_timestamp")
         if self.playlist_total == 0:
             self.setProperty("PlaylistSummary", "0 tracks · 0:00")
-            self.playlist_summary_timestamp = playlist_timestamp
+            self.playlist_summary_timestamp = content_timestamp
             self.playlist_summary_loaded = True
         elif (
             self.getProperty("PlaylistVisible").lower() == "true"
             and (
                 not self.playlist_summary_loaded
-                or playlist_timestamp != self.playlist_summary_timestamp
+                or content_timestamp != self.playlist_summary_timestamp
             )
         ):
             try:
@@ -1151,7 +1141,7 @@ class LyrionWindow(xbmcgui.WindowXML):
                         format_playlist_time(total_duration),
                     ),
                 )
-            self.playlist_summary_timestamp = playlist_timestamp
+            self.playlist_summary_timestamp = content_timestamp
             self.playlist_summary_loaded = True
         playlist_position = (
             "{} of {}".format(current_index + 1, self.playlist_total)
@@ -1274,8 +1264,6 @@ def main():
         "next": ("playlist", "index", "+1"),
         "play": ("play",),
         "pause": ("pause", "1"),
-        "volumeup": ("mixer", "volume", "+5"),
-        "volumedown": ("mixer", "volume", "-5"),
         "volumeup": ("mixer", "volume", "+5"),
         "volumedown": ("mixer", "volume", "-5"),
     }

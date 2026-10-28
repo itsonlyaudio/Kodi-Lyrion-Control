@@ -1,10 +1,11 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon id="plugin.audio.lyrion"
        name="Lyrion"
-       version="1.4.23"
+       version="2.0.0"
        provider-name="itsonlyaudio">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>
+    <import addon="script.module.pil" version="5.1.0"/>
   </requires>
   <extension point="xbmc.python.pluginsource" library="default.py">
     <provides>audio</provides>

@@ -1,6 +1,9 @@
 import base64
+import hashlib
+import io
 import json
 import math
+import os
 import socket
 import sys
 import threading
@@ -14,6 +17,7 @@ import xbmc
 import xbmcaddon
 import xbmcgui
 import xbmcplugin
+import xbmcvfs
 
 
 ADDON = xbmcaddon.Addon()
@@ -22,12 +26,15 @@ PLAYLIST_CONTROL_ID = 300
 REFRESH_CONTROL_ID = 104
 PLAYLIST_PAGE_SIZE = 100
 GUI_SOUND_MODE_SETTING = "audiooutput.guisoundmode"
-PROGRESS_LEFT = 105 + 590
-PROGRESS_TOP = 70 + 365
-PROGRESS_WIDTH = 1120
-PROGRESS_HEIGHT = 36
+PROGRESS_LEFT = 60 + 70
+PROGRESS_TOP = 35 + 850
+PROGRESS_WIDTH = 1660
+PROGRESS_HEIGHT = 14
 WINDOW_ID = 11000
 REFRESH_OWNER_PROPERTY = "LyrionRefreshOwner"
+MAX_ARTWORK_BYTES = 20 * 1024 * 1024
+BLUR_SOURCE_SIZE = (480, 270)
+BLUR_RADIUS = 18
 
 
 def parse_discovery_response(packet, address):
@@ -347,6 +354,60 @@ def playlist_item_label(track, is_current):
     return "{}  -  {}".format(title, artist) if artist else title
 
 
+class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_handle, code, message, headers, url):
+        redirected = super().redirect_request(
+            request, file_handle, code, message, headers, url
+        )
+        if redirected is not None:
+            original = urllib.parse.urlsplit(request.full_url)
+            destination = urllib.parse.urlsplit(url)
+            if (original.scheme, original.netloc) != (
+                destination.scheme,
+                destination.netloc,
+            ):
+                redirected.remove_header("Authorization")
+        return redirected
+
+
+def create_blurred_artwork(source_url, target_path, server_url, auth_header):
+    from PIL import Image, ImageFilter
+
+    headers = {}
+    source = urllib.parse.urlsplit(source_url)
+    server = urllib.parse.urlsplit(server_url)
+    if source.scheme not in ("http", "https"):
+        raise RuntimeError("Artwork URL must use HTTP or HTTPS.")
+    if auth_header and (source.scheme, source.netloc) == (server.scheme, server.netloc):
+        headers["Authorization"] = auth_header
+    request = urllib.request.Request(source_url, headers=headers)
+    opener = urllib.request.build_opener(SameOriginRedirectHandler())
+    with opener.open(request, timeout=10) as response:
+        image_data = response.read(MAX_ARTWORK_BYTES + 1)
+    if len(image_data) > MAX_ARTWORK_BYTES:
+        raise RuntimeError("Artwork image exceeds the 20 MB processing limit.")
+
+    try:
+        with Image.open(io.BytesIO(image_data)) as source_image:
+            if source_image.width * source_image.height > 40000000:
+                raise RuntimeError("Artwork image dimensions are too large to process.")
+            image = source_image.convert("RGB")
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        raise RuntimeError("The artwork image could not be decoded.") from exc
+    image.thumbnail(
+        BLUR_SOURCE_SIZE,
+        getattr(Image, "Resampling", Image).LANCZOS,
+    )
+    image = image.filter(ImageFilter.GaussianBlur(BLUR_RADIUS))
+    image = image.resize(
+        (1920, 1080),
+        getattr(Image, "Resampling", Image).LANCZOS,
+    )
+    temporary_path = target_path + ".tmp"
+    image.save(temporary_path, format="JPEG", quality=84, optimize=True)
+    os.replace(temporary_path, target_path)
+
+
 def kodi_jsonrpc(method, params):
     request = {
         "jsonrpc": "2.0",
@@ -384,6 +445,12 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.playlist_start = 0
         self.playlist_total = 0
         self.last_volume_warning_at = 0.0
+        self.blur_artwork_url = None
+        self.blur_completed_url = None
+        self.blur_result = None
+        self.blur_lock = threading.Lock()
+        self.blur_thread = None
+        self.setProperty("PlaylistVisible", "false")
         progress_path = "{}/resources/skins/Default/1080i/progress-fill.png".format(
             ADDON.getAddonInfo("path")
         )
@@ -395,6 +462,7 @@ class LyrionWindow(xbmcgui.WindowXML):
             progress_path,
         )
         self.addControl(self.progress_fill)
+        self.progress_fill.setColorDiffuse("FFFFB092")
         self.progress_fill.setVisible(False)
         previous_owner = self.kodi_window.getProperty(REFRESH_OWNER_PROPERTY)
         self.kodi_window.setProperty(
@@ -447,6 +515,12 @@ class LyrionWindow(xbmcgui.WindowXML):
         if control_id == 105:
             self.exit_addon()
             return
+        if control_id == 106:
+            self.toggle_playlist()
+            return
+        if control_id == 108:
+            self.set_playlist_visible(False)
+            return
         if self.client is None:
             xbmc.log(
                 "Lyrion: ignored control {} because no server connection is available.".format(
@@ -488,7 +562,9 @@ class LyrionWindow(xbmcgui.WindowXML):
         action_id = action.getId()
         if action_id not in (9, 10) and not self.is_refresh_owner():
             return
-        if action_id in (3, 4) and self.getFocusId() == PLAYLIST_CONTROL_ID:
+        if action_id in (1, 2) and self.getFocusId() == PLAYLIST_CONTROL_ID:
+            self.setFocusId(106)
+        elif action_id in (3, 4) and self.getFocusId() == PLAYLIST_CONTROL_ID:
             control = self.getControl(PLAYLIST_CONTROL_ID)
             selected_position = control.getSelectedPosition()
             if action_id == 3 and selected_position == 0:
@@ -515,7 +591,87 @@ class LyrionWindow(xbmcgui.WindowXML):
         elif action_id == 89:
             self.change_lyrion_volume("-5")
         elif action_id in (9, 10):
-            self.exit_addon()
+            if self.getProperty("PlaylistVisible").lower() == "true":
+                self.set_playlist_visible(False)
+            else:
+                self.exit_addon()
+
+    def toggle_playlist(self):
+        visible = self.getProperty("PlaylistVisible").lower() == "true"
+        self.set_playlist_visible(not visible)
+
+    def set_playlist_visible(self, visible):
+        self.setProperty("PlaylistVisible", "true" if visible else "false")
+        self.setFocusId(PLAYLIST_CONTROL_ID if visible else 106)
+
+    def update_blurred_artwork(self, artwork_url):
+        if artwork_url != self.blur_artwork_url:
+            self.blur_artwork_url = artwork_url
+            self.blur_completed_url = None
+            self.setProperty("BlurredArtwork", "")
+
+        with self.blur_lock:
+            result = self.blur_result
+            self.blur_result = None
+        if result is not None:
+            result_url, result_path, error = result
+            if result_url == self.blur_artwork_url:
+                self.blur_completed_url = result_url
+                if error is None:
+                    self.setProperty("BlurredArtwork", result_path)
+                else:
+                    xbmc.log(
+                        "Lyrion: could not create blurred artwork: {}".format(error),
+                        xbmc.LOGWARNING,
+                    )
+
+        if (
+            artwork_url
+            and artwork_url != self.blur_completed_url
+            and (self.blur_thread is None or not self.blur_thread.is_alive())
+        ):
+            cache_dir = xbmcvfs.translatePath(
+                "special://profile/addon_data/plugin.audio.lyrion/blurred-artwork"
+            )
+            if not xbmcvfs.exists(cache_dir) and not xbmcvfs.mkdirs(cache_dir):
+                raise RuntimeError("Could not create the blurred artwork cache.")
+            image_name = hashlib.sha256(
+                artwork_url.encode("utf-8")
+            ).hexdigest() + ".jpg"
+            image_path = os.path.join(cache_dir, image_name)
+            if xbmcvfs.exists(image_path):
+                self.blur_completed_url = artwork_url
+                self.setProperty("BlurredArtwork", image_path)
+                return
+
+            self.blur_thread = threading.Thread(
+                target=self.create_blurred_artwork_worker,
+                args=(artwork_url, image_path),
+                name="LyrionArtworkBlur",
+                daemon=True,
+            )
+            self.blur_thread.start()
+
+    def create_blurred_artwork_worker(self, artwork_url, image_path):
+        error = None
+        try:
+            create_blurred_artwork(
+                artwork_url,
+                image_path,
+                self.client.base_url,
+                self.client.auth_header,
+            )
+        except (
+            ImportError,
+            OSError,
+            RuntimeError,
+            TimeoutError,
+            urllib.error.URLError,
+            ValueError,
+        ) as exc:
+            error = exc
+        with self.blur_lock:
+            self.blur_result = (artwork_url, image_path, error)
 
     def change_lyrion_volume(self, change):
         if self.client is None:
@@ -825,16 +981,13 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty("Artist", str(artist))
         self.setProperty("Album", str(album))
         self.setProperty("Renderer", str(self.client.player_name))
-        header_parts = []
-        if self.client.library_name:
-            header_parts.append(self.client.library_name)
-        if self.client.player_name:
-            header_parts.append(self.client.player_name)
-        self.setProperty("Header", " - ".join(header_parts))
-        self.setProperty(
-            "PlaylistCount",
-            str(data.get("playlist_tracks", len(self.playlist_tracks))),
-        )
+        library_name = str(self.client.library_name or "").strip()
+        player_name = str(self.client.player_name or "").strip()
+        if library_name and player_name:
+            header = "{} playing on {}".format(library_name, player_name)
+        else:
+            header = library_name or player_name
+        self.setProperty("Header", header)
         playlist_name = str(data.get("playlist_name") or "").strip()
         self.setProperty("PlaylistName", playlist_name or "Playlist")
         try:
@@ -843,6 +996,10 @@ class LyrionWindow(xbmcgui.WindowXML):
             )
         except (TypeError, ValueError):
             self.playlist_total = len(self.playlist_tracks)
+        self.setProperty("PlaylistCount", str(self.playlist_total))
+        self.setProperty(
+            "PlaylistCountLabel", "track" if self.playlist_total == 1 else "tracks"
+        )
         self.setProperty("Mode", str(mode))
         mode = str(mode).lower()
         if mode == "play":
@@ -860,7 +1017,9 @@ class LyrionWindow(xbmcgui.WindowXML):
             self.progress_fill.setVisible(duration > 0)
         else:
             self.progress_fill.setVisible(False)
-        self.setProperty("Artwork", self.client.artwork_url(current))
+        artwork_url = self.client.artwork_url(current)
+        self.setProperty("Artwork", artwork_url)
+        self.update_blurred_artwork(artwork_url)
         visible_tracks = sorted(self.playlist_tracks.items())
         snapshot = [
             (index, str(track.get("title", "Unknown title")),

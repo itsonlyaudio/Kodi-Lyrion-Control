@@ -12,7 +12,7 @@ enable **Lyrion** in Kodi. For installation from ZIP, the archive must contain
 the add-on folder at its root, with `addon.xml` inside that folder:
 
 ```text
-plugin.audio.lyrion-1.4.23-kodi21.zip
+plugin.audio.lyrion-2.0.0-kodi21.zip
 └── plugin.audio.lyrion/
     ├── addon.xml
     ├── default.py
@@ -55,42 +55,46 @@ Kodi GUI sounds are muted while the add-on screen is active and the previous
 GUI-sound mode is restored when Kodi leaves the screen, including through an
 external remote. Playback status continues refreshing in the background. This
 does not affect music playback or volume.
-The playlist opens around the current track and loads additional tracks when
-you navigate to the top or bottom of the loaded range. Selection continues into
-newly loaded tracks without rebuilding the existing list when crossing a page
-boundary. Selecting a track plays it without moving or recentering the list.
-When playback changes from the Previous/Next controls or another app, the list
-selection follows the playing track.
+The screen uses an album-art-first widescreen layout with track details beside
+the cover, playback controls and timeline along the bottom, and a heavily
+blurred, dimmed artwork backdrop. The blur is generated and cached locally when
+the current track changes. The playlist is hidden by default and opens as a
+right-side overlay from the top-right queue button; pressing Back or the
+overlay's close button hides it again. The playlist opens around the current
+track and loads additional tracks when you navigate to the top or bottom of the
+loaded range. Selection continues into newly loaded tracks without rebuilding
+the existing list when crossing a page boundary. Selecting a track plays it
+without moving or recentering the list. When playback changes from the
+Previous/Next controls or another app, the list selection follows the playing
+track.
 The playlist heading uses the current playlist's name when Lyrion provides one,
-and falls back to “Playlist” when the name is unavailable.
+and falls back to “Playlist” when the name is unavailable. Its count uses the
+singular “track” for one item and “tracks” otherwise.
 The screen header uses the Lyrion logo alongside the music library and player
 names when available.
 
 ## Controls
 
 Use the screen's icon-based Previous, Play/Pause, and Next buttons or select a
-track in the playlist. The combined button shows a green play icon while
+track in the playlist overlay. The combined button shows a green play icon while
 playing, a yellow pause icon while paused, and a neutral play icon when stopped.
 Clicking it pauses active playback or starts/resumes playback otherwise. The
 Exit button uses a power icon and sits alongside the transport controls. The
-focused playlist track is highlighted in blue text without a row background.
+focused playlist track is highlighted in warm peach text.
 At the start and end of the playlist, further up/down presses keep selection at
-that boundary; left/right navigation returns to the playback controls. The
-playback timeline is a simple square-edged bar: a solid blue fill on a dark
-36-pixel-high track. The song title uses Kodi's 52px title
-font, about 50% larger than the original, and a blue
-divider underlines the playlist heading. The current Lyrion volume appears at
-the top right in decibels relative to full volume (100% is 0 dB; 0% is -inf
-dB). Kodi keyboard and remote navigation works while this
-screen is open: left/right
-from the playlist return focus to the previous/play controls; up/down continue
-moving through the playlist. Select activates a control, and the usual
+that boundary; left/right navigation returns focus to the top-right playlist
+button.
+The current Lyrion volume appears at the top right in decibels relative to full
+volume (100% is 0 dB; 0% is -inf dB). Kodi keyboard and remote navigation works
+while this screen is open: left/right from the playlist return focus to the
+top-right playlist button; up/down continue moving through the playlist. Select
+activates a control, and the usual
 previous, next, pause, and play actions trigger the corresponding Lyrion
 commands. Volume Up and Volume Down send 5% volume changes to Lyrion while this
 screen is open.
 Kodi may also apply its own volume change to those same key actions.
-Escape or Back returns to Kodi Home. The on-screen **Exit** button also
-returns to Kodi Home.
+Escape or Back closes the playlist overlay when it is open; otherwise it returns
+to Kodi Home. The on-screen **Exit** button also returns to Kodi Home.
 
 Kodi's built-in remote-app transport buttons are routed to the Kodi media
 player, not arbitrary add-ons. A remote app that supports custom Kodi commands

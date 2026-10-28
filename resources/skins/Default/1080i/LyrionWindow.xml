@@ -14,11 +14,27 @@
       <height>1080</height>
       <texture colordiffuse="DD101820">white.png</texture>
     </control>
+    <control type="image">
+      <left>0</left>
+      <top>0</top>
+      <width>1920</width>
+      <height>1080</height>
+      <aspectratio>scale</aspectratio>
+      <texture colordiffuse="FF101010">$INFO[Window.Property(Artwork)]</texture>
+    </control>
+    <control type="image">
+      <left>0</left>
+      <top>0</top>
+      <width>1920</width>
+      <height>1080</height>
+      <aspectratio>scale</aspectratio>
+      <texture colordiffuse="FFB5B5B5">$INFO[Window.Property(BlurredArtwork)]</texture>
+    </control>
     <control type="group">
-      <left>105</left>
-      <top>70</top>
-      <width>1710</width>
-      <height>940</height>
+      <left>60</left>
+      <top>35</top>
+      <width>1800</width>
+      <height>1010</height>
       <control type="image">
         <left>0</left>
         <top>2</top>
@@ -30,7 +46,7 @@
       <control type="label">
         <left>72</left>
         <top>0</top>
-        <width>1248</width>
+        <width>1180</width>
         <height>62</height>
         <font>font36</font>
         <label>$INFO[Window.Property(Header)]</label>
@@ -40,7 +56,7 @@
       <control type="label">
         <left>1390</left>
         <top>0</top>
-        <width>320</width>
+        <width>300</width>
         <height>62</height>
         <font>font24</font>
         <label>$INFO[Window.Property(Volume)]</label>
@@ -48,65 +64,98 @@
         <align>right</align>
         <aligny>center</aligny>
       </control>
+      <control type="button" id="106">
+        <left>1700</left>
+        <top>0</top>
+        <width>90</width>
+        <height>62</height>
+        <font>font36</font>
+        <label>≡</label>
+        <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
+        <texturenofocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-normal.png</texturenofocus>
+        <align>center</align>
+        <aligny>center</aligny>
+        <textcolor>white</textcolor>
+        <focusedcolor>white</focusedcolor>
+        <onleft>106</onleft>
+        <onright>106</onright>
+        <ondown>101</ondown>
+      </control>
       <control type="image">
-        <left>0</left>
+        <left>50</left>
         <top>95</top>
-        <width>540</width>
-        <height>540</height>
+        <width>650</width>
+        <height>650</height>
         <aspectratio>keep</aspectratio>
         <texture>$INFO[Window.Property(Artwork)]</texture>
         <bordertexture border="2">white.png</bordertexture>
         <bordersize>2</bordersize>
       </control>
       <control type="label">
-        <left>590</left>
-        <top>108</top>
-        <width>1050</width>
-        <height>88</height>
+        <left>730</left>
+        <top>250</top>
+        <width>510</width>
+        <height>100</height>
         <font>font52_title</font>
         <label>$INFO[Window.Property(Title)]</label>
         <textcolor>white</textcolor>
+        <align>center</align>
+        <aligny>center</aligny>
         <scroll>true</scroll>
       </control>
       <control type="label">
-        <left>590</left>
-        <top>207</top>
-        <width>1050</width>
-        <height>48</height>
+        <left>730</left>
+        <top>365</top>
+        <width>510</width>
+        <height>58</height>
         <font>font24</font>
         <label>$INFO[Window.Property(Artist)]</label>
         <textcolor>FFCCCCCC</textcolor>
+        <align>center</align>
+        <aligny>center</aligny>
       </control>
       <control type="label">
-        <left>590</left>
-        <top>260</top>
-        <width>1050</width>
-        <height>48</height>
+        <left>730</left>
+        <top>435</top>
+        <width>510</width>
+        <height>52</height>
         <font>font20</font>
         <label>$INFO[Window.Property(Album)]</label>
         <textcolor>FFAAAAAA</textcolor>
-      </control>
-      <control type="image">
-        <left>590</left>
-        <top>365</top>
-        <width>1120</width>
-        <height>36</height>
-        <texture colordiffuse="FF26323D">white.png</texture>
+        <align>center</align>
+        <aligny>center</aligny>
       </control>
       <control type="label">
-        <left>590</left>
-        <top>405</top>
-        <width>1050</width>
-        <height>40</height>
+        <left>70</left>
+        <top>810</top>
+        <width>350</width>
+        <height>38</height>
         <font>font16</font>
-        <label>$INFO[Window.Property(Position)] / $INFO[Window.Property(Duration)]</label>
+        <label>$INFO[Window.Property(Position)]</label>
         <textcolor>FFCCCCCC</textcolor>
       </control>
+      <control type="label">
+        <left>1450</left>
+        <top>810</top>
+        <width>350</width>
+        <height>38</height>
+        <font>font16</font>
+        <label>$INFO[Window.Property(Duration)]</label>
+        <textcolor>FFCCCCCC</textcolor>
+        <align>right</align>
+      </control>
+      <control type="image">
+        <left>70</left>
+        <top>850</top>
+        <width>1660</width>
+        <height>14</height>
+        <texture colordiffuse="FF26323D">white.png</texture>
+      </control>
       <control type="button" id="100">
-        <left>590</left>
-        <top>515</top>
+        <left>690</left>
+        <top>895</top>
         <width>120</width>
-        <height>72</height>
+        <height>82</height>
         <font>font36</font>
         <label>|◀</label>
         <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
@@ -117,14 +166,14 @@
         <focusedcolor>white</focusedcolor>
         <onleft>100</onleft>
         <onright>101</onright>
-        <onup>300</onup>
-        <ondown>300</ondown>
+        <onup>106</onup>
+        <ondown>100</ondown>
       </control>
       <control type="button" id="101">
-        <left>720</left>
-        <top>515</top>
-        <width>120</width>
-        <height>72</height>
+        <left>840</left>
+        <top>895</top>
+        <width>140</width>
+        <height>82</height>
         <font>font36</font>
         <label>$INFO[Window.Property(PlayPauseButtonLabel)]</label>
         <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
@@ -135,14 +184,14 @@
         <focusedcolor>white</focusedcolor>
         <onleft>100</onleft>
         <onright>103</onright>
-        <onup>300</onup>
-        <ondown>300</ondown>
+        <onup>106</onup>
+        <ondown>101</ondown>
       </control>
       <control type="button" id="103">
-        <left>850</left>
-        <top>515</top>
+        <left>1010</left>
+        <top>895</top>
         <width>120</width>
-        <height>72</height>
+        <height>82</height>
         <font>font36</font>
         <label>▶|</label>
         <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
@@ -153,8 +202,8 @@
         <focusedcolor>white</focusedcolor>
         <onleft>101</onleft>
         <onright>105</onright>
-        <onup>300</onup>
-        <ondown>300</ondown>
+        <onup>106</onup>
+        <ondown>103</ondown>
       </control>
       <control type="button" id="104">
         <left>0</left>
@@ -165,10 +214,10 @@
         <visible>false</visible>
       </control>
       <control type="button" id="105">
-        <left>980</left>
-        <top>515</top>
-        <width>120</width>
-        <height>72</height>
+        <left>1160</left>
+        <top>895</top>
+        <width>100</width>
+        <height>82</height>
         <font>font36</font>
         <label></label>
         <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
@@ -179,70 +228,98 @@
         <focusedcolor>white</focusedcolor>
         <onleft>103</onleft>
         <onright>105</onright>
-        <onup>103</onup>
-        <ondown>300</ondown>
+        <onup>106</onup>
+        <ondown>105</ondown>
       </control>
       <control type="image">
-        <left>1020</left>
-        <top>531</top>
+        <left>1190</left>
+        <top>916</top>
         <width>40</width>
         <height>40</height>
         <aspectratio>keep</aspectratio>
         <texture>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/power.png</texture>
       </control>
+      <control type="group">
+        <left>1230</left>
+        <top>72</top>
+        <width>570</width>
+        <height>900</height>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
+        <animation effect="fade" start="0" end="100" time="220">Visible</animation>
+        <animation effect="fade" start="100" end="0" time="180">Hidden</animation>
+        <control type="image">
+          <left>0</left>
+          <top>0</top>
+          <width>570</width>
+          <height>900</height>
+          <texture colordiffuse="E61B1B1B">white.png</texture>
+        </control>
+        <control type="label">
+          <left>24</left>
+          <top>12</top>
+          <width>455</width>
+          <height>48</height>
+          <font>font20</font>
+          <label>$INFO[Window.Property(PlaylistName)] ($INFO[Window.Property(PlaylistCount)] $INFO[Window.Property(PlaylistCountLabel)])</label>
+          <textcolor>white</textcolor>
+          <aligny>center</aligny>
+        </control>
+        <control type="button" id="108">
+          <left>490</left>
+          <top>8</top>
+          <width>64</width>
+          <height>56</height>
+          <font>font30</font>
+          <label>×</label>
+          <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
+          <texturenofocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-normal.png</texturenofocus>
+          <align>center</align>
+          <aligny>center</aligny>
+          <textcolor>white</textcolor>
+          <focusedcolor>white</focusedcolor>
+          <ondown>300</ondown>
+          <onup>106</onup>
+          <onleft>108</onleft>
+          <onright>108</onright>
+        </control>
+        <control type="list" id="300">
+          <left>12</left>
+          <top>70</top>
+          <width>546</width>
+          <height>815</height>
+          <itemlayout height="54">
+            <control type="label">
+              <left>10</left>
+              <top>2</top>
+              <width>520</width>
+              <height>50</height>
+              <font>font18</font>
+              <label>$INFO[ListItem.Label]</label>
+              <textcolor>FFCCCCCC</textcolor>
+            </control>
+          </itemlayout>
+          <focusedlayout height="54">
+            <control type="label">
+              <left>10</left>
+              <top>2</top>
+              <width>520</width>
+              <height>50</height>
+              <font>font18</font>
+              <label>$INFO[ListItem.Label]</label>
+              <textcolor>FFFFB092</textcolor>
+            </control>
+          </focusedlayout>
+          <onleft>100</onleft>
+          <onright>101</onright>
+          <onup>300</onup>
+          <ondown>300</ondown>
+        </control>
+      </control>
       <control type="label">
         <left>0</left>
-        <top>665</top>
-        <width>1000</width>
-        <height>42</height>
-        <font>font20</font>
-        <label>$INFO[Window.Property(PlaylistName)] ($INFO[Window.Property(PlaylistCount)] tracks)</label>
-        <textcolor>white</textcolor>
-      </control>
-      <control type="image">
-        <left>0</left>
-        <top>710</top>
-        <width>1710</width>
-        <height>3</height>
-        <texture>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/playlist-divider.png</texture>
-      </control>
-      <control type="list" id="300">
-        <left>0</left>
-        <top>715</top>
-        <width>1640</width>
-        <height>220</height>
-        <itemlayout height="54">
-          <control type="label">
-            <left>10</left>
-            <top>2</top>
-            <width>1600</width>
-            <height>50</height>
-            <font>font18</font>
-            <label>$INFO[ListItem.Label]</label>
-            <textcolor>FFCCCCCC</textcolor>
-          </control>
-        </itemlayout>
-        <focusedlayout height="54">
-          <control type="label">
-            <left>10</left>
-            <top>2</top>
-            <width>1600</width>
-            <height>50</height>
-            <font>font18</font>
-            <label>$INFO[ListItem.Label]</label>
-            <textcolor>FF4DA3FF</textcolor>
-          </control>
-        </focusedlayout>
-        <onleft>100</onleft>
-        <onright>101</onright>
-        <onup>300</onup>
-        <ondown>300</ondown>
-      </control>
-      <control type="label">
-        <left>0</left>
-        <top>945</top>
-        <width>1640</width>
-        <height>54</height>
+        <top>970</top>
+        <width>1800</width>
+        <height>38</height>
         <font>font16</font>
         <label>$INFO[Window.Property(Error)]</label>
         <textcolor>FFFF7777</textcolor>

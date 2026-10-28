@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <window id="11000" type="dialog">
-  <defaultcontrol>100</defaultcontrol>
+  <defaultcontrol>101</defaultcontrol>
   <coordinates>
     <system>1</system>
     <posx>0</posx>
@@ -126,50 +126,100 @@
         <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
       </control>
       <control type="label">
-        <left>730</left>
-        <top>365</top>
-        <width>510</width>
-        <height>58</height>
-        <font>font24</font>
-        <label>$INFO[Window.Property(Artist)]</label>
-        <textcolor>FFCCCCCC</textcolor>
-        <align>center</align>
+        <left>780</left>
+        <top>382</top>
+        <width>120</width>
+        <height>48</height>
+        <font>font16</font>
+        <label>by</label>
+        <textcolor>FFAAAAAA</textcolor>
+        <align>right</align>
         <aligny>center</aligny>
         <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
       </control>
       <control type="label">
-        <left>730</left>
-        <top>365</top>
-        <width>1060</width>
-        <height>58</height>
-        <font>font24</font>
-        <label>$INFO[Window.Property(Artist)]</label>
-        <textcolor>FFCCCCCC</textcolor>
-        <align>center</align>
+        <left>1055</left>
+        <top>382</top>
+        <width>120</width>
+        <height>48</height>
+        <font>font16</font>
+        <label>by</label>
+        <textcolor>FFAAAAAA</textcolor>
+        <align>right</align>
         <aligny>center</aligny>
         <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
       </control>
       <control type="label">
-        <left>730</left>
-        <top>435</top>
-        <width>510</width>
-        <height>52</height>
-        <font>font20</font>
-        <label>$INFO[Window.Property(Album)]</label>
-        <textcolor>FFAAAAAA</textcolor>
-        <align>center</align>
+        <left>908</left>
+        <top>382</top>
+        <width>300</width>
+        <height>48</height>
+        <font>font24</font>
+        <label>[B]$INFO[Window.Property(Artist)][/B]</label>
+        <textcolor>FFCCCCCC</textcolor>
+        <align>left</align>
+        <aligny>center</aligny>
+        <scroll>true</scroll>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
+      </control>
+      <control type="label">
+        <left>1183</left>
+        <top>382</top>
+        <width>530</width>
+        <height>48</height>
+        <font>font24</font>
+        <label>[B]$INFO[Window.Property(Artist)][/B]</label>
+        <textcolor>FFCCCCCC</textcolor>
+        <align>left</align>
+        <aligny>center</aligny>
+        <scroll>true</scroll>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
+      </control>
+      <control type="label">
+        <left>785</left>
+        <top>461</top>
+        <width>120</width>
+        <height>44</height>
+        <font>font16</font>
+        <label>from</label>
+        <textcolor>FF999999</textcolor>
+        <align>right</align>
         <aligny>center</aligny>
         <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
       </control>
       <control type="label">
-        <left>730</left>
-        <top>435</top>
-        <width>1060</width>
-        <height>52</height>
+        <left>1060</left>
+        <top>461</top>
+        <width>120</width>
+        <height>44</height>
+        <font>font16</font>
+        <label>from</label>
+        <textcolor>FF999999</textcolor>
+        <align>right</align>
+        <aligny>center</aligny>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
+      </control>
+      <control type="label">
+        <left>913</left>
+        <top>461</top>
+        <width>295</width>
+        <height>44</height>
         <font>font20</font>
-        <label>$INFO[Window.Property(Album)]</label>
+        <label>[B]$INFO[Window.Property(Album)][/B]</label>
         <textcolor>FFAAAAAA</textcolor>
-        <align>center</align>
+        <align>left</align>
+        <aligny>center</aligny>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
+      </control>
+      <control type="label">
+        <left>1188</left>
+        <top>461</top>
+        <width>525</width>
+        <height>44</height>
+        <font>font20</font>
+        <label>[B]$INFO[Window.Property(Album)][/B]</label>
+        <textcolor>FFAAAAAA</textcolor>
+        <align>left</align>
         <aligny>center</aligny>
         <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
       </control>

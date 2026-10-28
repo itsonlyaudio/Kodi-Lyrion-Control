@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <addon id="plugin.audio.lyrion"
        name="Lyrion"
-       version="2.1.9"
+       version="2.1.15"
        provider-name="itsonlyaudio">
   <requires>
     <import addon="xbmc.python" version="3.0.0"/>

@@ -479,6 +479,7 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.playlist_items = []
         self.current_playlist_index = None
         self.playlist_tracks = {}
+        self.playlist_content_timestamp = None
         self.playlist_start = 0
         self.playlist_total = 0
         self.playlist_summary_timestamp = None
@@ -1063,6 +1064,10 @@ class LyrionWindow(xbmcgui.WindowXML):
             page_start = max(0, int(data.get("_playlist_start", self.playlist_start)))
         except (TypeError, ValueError):
             page_start = self.playlist_start
+        content_timestamp = data.get("playlist_timestamp")
+        if content_timestamp != self.playlist_content_timestamp:
+            self.playlist_tracks.clear()
+            self.playlist_content_timestamp = content_timestamp
         for offset, track in enumerate(playlist):
             self.playlist_tracks[page_start + offset] = track
         try:
@@ -1103,6 +1108,10 @@ class LyrionWindow(xbmcgui.WindowXML):
             )
         except (TypeError, ValueError):
             self.playlist_total = len(self.playlist_tracks)
+        for index in [index for index in self.playlist_tracks if index >= self.playlist_total]:
+            del self.playlist_tracks[index]
+        if self.playlist_start >= self.playlist_total:
+            self.playlist_start = 0
         self.setProperty("PlaylistCount", str(self.playlist_total))
         self.setProperty(
             "PlaylistCountLabel", "track" if self.playlist_total == 1 else "tracks"

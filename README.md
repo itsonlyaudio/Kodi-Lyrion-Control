@@ -58,8 +58,9 @@ does not affect music playback or volume.
 The screen uses an album-art-first widescreen layout with track details beside
 the cover, playback controls and timeline along the bottom, and a heavily
 blurred, dimmed artwork backdrop. The blur is generated and cached locally when
-the current track changes. The playlist is hidden by default and opens as a
-right-side overlay from the top-right queue button; pressing Back or the
+the current track changes using Kodi's bundled Pillow module; artwork is not
+uploaded to an external service. The playlist is hidden by default and opens as
+a right-side overlay from the top-right queue button; pressing Back or the
 overlay's close button hides it again. The playlist opens around the current
 track and loads additional tracks when you navigate to the top or bottom of the
 loaded range. Selection continues into newly loaded tracks without rebuilding

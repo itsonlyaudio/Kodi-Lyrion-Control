@@ -70,7 +70,7 @@
         <width>90</width>
         <height>62</height>
         <font>font36</font>
-        <label>≡</label>
+        <label></label>
         <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
         <texturenofocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-normal.png</texturenofocus>
         <align>center</align>
@@ -80,6 +80,14 @@
         <onleft>106</onleft>
         <onright>106</onright>
         <ondown>101</ondown>
+      </control>
+      <control type="image">
+        <left>1723</left>
+        <top>9</top>
+        <width>44</width>
+        <height>44</height>
+        <aspectratio>keep</aspectratio>
+        <texture>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/menu-music.png</texture>
       </control>
       <control type="image">
         <left>50</left>
@@ -357,7 +365,7 @@
           <top>0</top>
           <width>570</width>
           <height>778</height>
-          <texture colordiffuse="E61B1B1B">white.png</texture>
+          <texture>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/playlist-background.png</texture>
         </control>
         <control type="label">
           <left>24</left>
@@ -365,7 +373,7 @@
           <width>455</width>
           <height>48</height>
           <font>font20</font>
-          <label>$INFO[Window.Property(PlaylistName)] ($INFO[Window.Property(PlaylistCount)] $INFO[Window.Property(PlaylistCountLabel)])</label>
+          <label>$INFO[Window.Property(PlaylistSummary)]</label>
           <textcolor>white</textcolor>
           <aligny>center</aligny>
         </control>

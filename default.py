@@ -286,6 +286,31 @@ class LyrionClient:
             result["_playlist_start"] = start
         return result
 
+    def playlist_duration(self, count):
+        result = self.request(["status", "0", str(count), "tags:d"])
+        tracks = get_playlist(result)
+        if len(tracks) != count:
+            raise RuntimeError(
+                "The Lyrion server returned {} of {} playlist tracks for total time."
+                .format(len(tracks), count)
+            )
+        total_duration = 0.0
+        for index, track in enumerate(tracks):
+            try:
+                duration = float(track["duration"])
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise RuntimeError(
+                    "The Lyrion server did not return a valid duration for playlist "
+                    "track {}.".format(index + 1)
+                ) from exc
+            if not math.isfinite(duration) or duration < 0:
+                raise RuntimeError(
+                    "The Lyrion server returned an invalid duration for playlist "
+                    "track {}.".format(index + 1)
+                )
+            total_duration += duration
+        return total_duration
+
     def volume(self):
         result = self.request(["mixer", "volume", "?"])
         if not isinstance(result, dict):
@@ -331,6 +356,15 @@ def format_time(value):
     except (TypeError, ValueError, OverflowError):
         seconds = 0
     return "{}:{:02d}".format(seconds // 60, seconds % 60)
+
+
+def format_playlist_time(value):
+    seconds = max(0, int(value))
+    hours, remainder = divmod(seconds, 3600)
+    if hours:
+        minutes, seconds = divmod(remainder, 60)
+        return "{}:{:02d}:{:02d}".format(hours, minutes, seconds)
+    return format_time(seconds)
 
 
 def format_volume_db(volume):
@@ -447,6 +481,8 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.playlist_tracks = {}
         self.playlist_start = 0
         self.playlist_total = 0
+        self.playlist_summary_timestamp = None
+        self.playlist_summary_loaded = False
         self.last_volume_warning_at = 0.0
         self.blur_artwork_url = None
         self.blur_completed_url = None
@@ -661,6 +697,8 @@ class LyrionWindow(xbmcgui.WindowXML):
 
     def set_playlist_visible(self, visible):
         self.setProperty("PlaylistVisible", "true" if visible else "false")
+        if not visible:
+            self.playlist_summary_loaded = False
         self.setFocusId(PLAYLIST_CONTROL_ID if visible else 106)
 
     def update_blurred_artwork(self, artwork_url):
@@ -1069,6 +1107,43 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty(
             "PlaylistCountLabel", "track" if self.playlist_total == 1 else "tracks"
         )
+        playlist_timestamp = data.get("playlist_timestamp")
+        if self.playlist_total == 0:
+            self.setProperty("PlaylistSummary", "0 tracks · 0:00")
+            self.playlist_summary_timestamp = playlist_timestamp
+            self.playlist_summary_loaded = True
+        elif (
+            self.getProperty("PlaylistVisible").lower() == "true"
+            and (
+                not self.playlist_summary_loaded
+                or playlist_timestamp != self.playlist_summary_timestamp
+            )
+        ):
+            try:
+                total_duration = self.client.playlist_duration(self.playlist_total)
+            except RuntimeError as exc:
+                self.setProperty(
+                    "PlaylistSummary",
+                    "{} {} · time unavailable".format(
+                        self.playlist_total,
+                        "track" if self.playlist_total == 1 else "tracks",
+                    ),
+                )
+                xbmc.log(
+                    "Lyrion: could not calculate playlist total time: {}".format(exc),
+                    xbmc.LOGWARNING,
+                )
+            else:
+                self.setProperty(
+                    "PlaylistSummary",
+                    "{} {} · {}".format(
+                        self.playlist_total,
+                        "track" if self.playlist_total == 1 else "tracks",
+                        format_playlist_time(total_duration),
+                    ),
+                )
+            self.playlist_summary_timestamp = playlist_timestamp
+            self.playlist_summary_loaded = True
         playlist_position = (
             "{} of {}".format(current_index + 1, self.playlist_total)
             if 0 <= current_index < self.playlist_total

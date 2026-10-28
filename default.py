@@ -24,11 +24,14 @@ ADDON = xbmcaddon.Addon()
 HANDLE = int(sys.argv[1])
 PLAYLIST_CONTROL_ID = 300
 REFRESH_CONTROL_ID = 104
+ACTION_NAV_BACK = 92
+REPEAT_CONTROL_ID = 107
+SHUFFLE_CONTROL_ID = 109
 PLAYLIST_PAGE_SIZE = 100
 GUI_SOUND_MODE_SETTING = "audiooutput.guisoundmode"
-PROGRESS_LEFT = 60 + 70
+PROGRESS_LEFT = 60 + 140
 PROGRESS_TOP = 35 + 850
-PROGRESS_WIDTH = 1660
+PROGRESS_WIDTH = 1520
 PROGRESS_HEIGHT = 14
 WINDOW_ID = 11000
 REFRESH_OWNER_PROPERTY = "LyrionRefreshOwner"
@@ -451,6 +454,8 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.blur_lock = threading.Lock()
         self.blur_thread = None
         self.setProperty("PlaylistVisible", "false")
+        self.setProperty("RepeatMode", "0")
+        self.setProperty("ShuffleMode", "0")
         progress_path = "{}/resources/skins/Default/1080i/progress-fill.png".format(
             ADDON.getAddonInfo("path")
         )
@@ -538,6 +543,10 @@ class LyrionWindow(xbmcgui.WindowXML):
                 self.send_command("play")
         elif control_id == 103:
             self.send_command("playlist", "index", "+1")
+        elif control_id == REPEAT_CONTROL_ID:
+            self.cycle_playlist_mode("repeat")
+        elif control_id == SHUFFLE_CONTROL_ID:
+            self.cycle_playlist_mode("shuffle")
         elif control_id == REFRESH_CONTROL_ID:
             self.refresh_click_count += 1
             if self.refresh_click_count == 1 or self.refresh_click_count % 10 == 0:
@@ -558,9 +567,59 @@ class LyrionWindow(xbmcgui.WindowXML):
                 except ValueError:
                     self.setProperty("Error", "Could not select that playlist track.")
 
+    def get_playlist_mode(self, data, mode, state_property):
+        state = self.getProperty(state_property) or "0"
+        keys = (
+            "playlist {}".format(mode),
+            "playlist_{}".format(mode),
+            "_playlist_{}".format(mode),
+        )
+        value = next((data[key] for key in keys if key in data), state)
+        try:
+            mode_value = int(value)
+        except (TypeError, ValueError, OverflowError):
+            mode_value = -1
+        if mode_value not in (0, 1, 2):
+            xbmc.log(
+                "Lyrion: ignoring invalid playlist {} mode {!r}.".format(
+                    mode, value
+                ),
+                xbmc.LOGWARNING,
+            )
+            return int(state)
+        return mode_value
+
+    def set_playlist_mode_icon(self, mode, state):
+        state_property = "RepeatMode" if mode == "repeat" else "ShuffleMode"
+        self.setProperty(state_property, str(state))
+        icon_directory = "{}/resources/skins/Default/1080i".format(
+            ADDON.getAddonInfo("path")
+        )
+        icons = (
+            ("repeat-off.png", "repeat-one.png", "repeat-all.png")
+            if mode == "repeat"
+            else ("shuffle-off.png", "shuffle-tracks.png", "shuffle-releases.png")
+        )
+        icon_property = "RepeatIcon" if mode == "repeat" else "ShuffleIcon"
+        self.setProperty(
+            icon_property,
+            "{}/{}".format(icon_directory, icons[state]),
+        )
+
+    def cycle_playlist_mode(self, mode):
+        state_property = "RepeatMode" if mode == "repeat" else "ShuffleMode"
+        current_state = int(self.getProperty(state_property) or "0")
+        next_state = (
+            (current_state + 1) % 3
+            if mode == "repeat"
+            else (0 if current_state else 1)
+        )
+        if self.send_command("playlist", mode, str(next_state)):
+            self.set_playlist_mode_icon(mode, next_state)
+
     def onAction(self, action):
         action_id = action.getId()
-        if action_id not in (9, 10) and not self.is_refresh_owner():
+        if action_id not in (9, 10, ACTION_NAV_BACK) and not self.is_refresh_owner():
             return
         if action_id in (1, 2) and self.getFocusId() == PLAYLIST_CONTROL_ID:
             self.setFocusId(106)
@@ -590,7 +649,7 @@ class LyrionWindow(xbmcgui.WindowXML):
             self.change_lyrion_volume("+5")
         elif action_id == 89:
             self.change_lyrion_volume("-5")
-        elif action_id in (9, 10):
+        elif action_id in (9, 10, ACTION_NAV_BACK):
             if self.getProperty("PlaylistVisible").lower() == "true":
                 self.set_playlist_visible(False)
             else:
@@ -849,19 +908,25 @@ class LyrionWindow(xbmcgui.WindowXML):
             message = "Cannot send a Lyrion command because no server connection is available."
             self.setProperty("Error", message)
             xbmc.log("Lyrion: " + message, xbmc.LOGWARNING)
-            return
+            return False
         try:
             self.client.command(*command)
             self.setProperty("Error", "")
+            return True
         except (RuntimeError, ValueError) as exc:
             self.setProperty("Error", str(exc))
             xbmc.log("Lyrion: command failed: {}".format(exc), xbmc.LOGWARNING)
+            return False
 
     def refresh_status(self):
         if self.client is None:
             return
         try:
             data = self.client.status(self.playlist_start)
+            if not isinstance(data, dict):
+                raise RuntimeError(
+                    "The Lyrion server returned an unexpected status response."
+                )
             try:
                 current_index = int(data.get("playlist_cur_index", -1))
             except (TypeError, ValueError):
@@ -888,6 +953,10 @@ class LyrionWindow(xbmcgui.WindowXML):
                     ),
                 )
                 data = self.client.status(start)
+                if not isinstance(data, dict):
+                    raise RuntimeError(
+                        "The Lyrion server returned an unexpected status response."
+                    )
                 self.playlist_tracks.clear()
                 self.playlist_start = start
             self.update_ui(data)
@@ -1000,6 +1069,16 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty(
             "PlaylistCountLabel", "track" if self.playlist_total == 1 else "tracks"
         )
+        playlist_position = (
+            "{} of {}".format(current_index + 1, self.playlist_total)
+            if 0 <= current_index < self.playlist_total
+            else ""
+        )
+        self.setProperty("PlaylistPosition", playlist_position)
+        repeat_mode = self.get_playlist_mode(data, "repeat", "RepeatMode")
+        shuffle_mode = self.get_playlist_mode(data, "shuffle", "ShuffleMode")
+        self.set_playlist_mode_icon("repeat", repeat_mode)
+        self.set_playlist_mode_icon("shuffle", shuffle_mode)
         self.setProperty("Mode", str(mode))
         mode = str(mode).lower()
         if mode == "play":

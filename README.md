@@ -12,7 +12,7 @@ enable **Lyrion** in Kodi. For installation from ZIP, the archive must contain
 the add-on folder at its root, with `addon.xml` inside that folder:
 
 ```text
-plugin.audio.lyrion-2.0.0-kodi21.zip
+plugin.audio.lyrion-2.1.5-kodi21.zip
 └── plugin.audio.lyrion/
     ├── addon.xml
     ├── default.py
@@ -67,7 +67,11 @@ loaded range. Selection continues into newly loaded tracks without rebuilding
 the existing list when crossing a page boundary. Selecting a track plays it
 without moving or recentering the list. When playback changes from the
 Previous/Next controls or another app, the list selection follows the playing
-track.
+track. Track details expand across the available right side when the playlist
+overlay is hidden and contract to make room when it is open. The progress
+timeline uses a dark gray unplayed section, with the
+current playlist position and total count centered above it. The elapsed and
+duration labels sit at the progress bar's vertical center.
 The playlist heading uses the current playlist's name when Lyrion provides one,
 and falls back to “Playlist” when the name is unavailable. Its count uses the
 singular “track” for one item and “tracks” otherwise.
@@ -76,12 +80,15 @@ names when available.
 
 ## Controls
 
-Use the screen's icon-based Previous, Play/Pause, and Next buttons or select a
-track in the playlist overlay. The combined button shows a green play icon while
-playing, a yellow pause icon while paused, and a neutral play icon when stopped.
-Clicking it pauses active playback or starts/resumes playback otherwise. The
-Exit button uses a power icon and sits alongside the transport controls. The
-focused playlist track is highlighted in warm peach text.
+Use the screen's Repeat, Previous, Play/Pause, Next, Shuffle, and Exit buttons
+or select a track in the playlist overlay. Repeat cycles through Off, One, and
+All; Shuffle toggles between Off and Songs. The repeat and shuffle
+icons change with each mode and use the warm peach accent when enabled. The
+combined button shows a green play icon while playing, a yellow pause icon
+while paused, and a neutral play icon when stopped. Clicking it pauses active
+playback or starts/resumes playback otherwise. The Exit button uses a power
+icon and sits alongside the transport controls. The focused playlist track is
+highlighted in warm peach text.
 At the start and end of the playlist, further up/down presses keep selection at
 that boundary; left/right navigation returns focus to the top-right playlist
 button.

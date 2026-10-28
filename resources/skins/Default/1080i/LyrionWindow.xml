@@ -102,6 +102,20 @@
         <align>center</align>
         <aligny>center</aligny>
         <scroll>true</scroll>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
+      </control>
+      <control type="label">
+        <left>730</left>
+        <top>250</top>
+        <width>1060</width>
+        <height>100</height>
+        <font>font52_title</font>
+        <label>$INFO[Window.Property(Title)]</label>
+        <textcolor>white</textcolor>
+        <align>center</align>
+        <aligny>center</aligny>
+        <scroll>true</scroll>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
       </control>
       <control type="label">
         <left>730</left>
@@ -113,6 +127,19 @@
         <textcolor>FFCCCCCC</textcolor>
         <align>center</align>
         <aligny>center</aligny>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
+      </control>
+      <control type="label">
+        <left>730</left>
+        <top>365</top>
+        <width>1060</width>
+        <height>58</height>
+        <font>font24</font>
+        <label>$INFO[Window.Property(Artist)]</label>
+        <textcolor>FFCCCCCC</textcolor>
+        <align>center</align>
+        <aligny>center</aligny>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
       </control>
       <control type="label">
         <left>730</left>
@@ -124,32 +151,84 @@
         <textcolor>FFAAAAAA</textcolor>
         <align>center</align>
         <aligny>center</aligny>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
       </control>
       <control type="label">
-        <left>70</left>
-        <top>810</top>
-        <width>350</width>
+        <left>730</left>
+        <top>435</top>
+        <width>1060</width>
+        <height>52</height>
+        <font>font20</font>
+        <label>$INFO[Window.Property(Album)]</label>
+        <textcolor>FFAAAAAA</textcolor>
+        <align>center</align>
+        <aligny>center</aligny>
+        <visible>String.IsEqual(Window.Property(PlaylistVisible),false)</visible>
+      </control>
+      <control type="label">
+        <left>50</left>
+        <top>834</top>
+        <width>75</width>
         <height>38</height>
         <font>font16</font>
         <label>$INFO[Window.Property(Position)]</label>
         <textcolor>FFCCCCCC</textcolor>
+        <aligny>center</aligny>
       </control>
       <control type="label">
-        <left>1450</left>
-        <top>810</top>
-        <width>350</width>
+        <left>1675</left>
+        <top>834</top>
+        <width>75</width>
         <height>38</height>
         <font>font16</font>
         <label>$INFO[Window.Property(Duration)]</label>
         <textcolor>FFCCCCCC</textcolor>
         <align>right</align>
+        <aligny>center</aligny>
+      </control>
+      <control type="label">
+        <left>140</left>
+        <top>791</top>
+        <width>1520</width>
+        <height>38</height>
+        <font>font16</font>
+        <label>$INFO[Window.Property(PlaylistPosition)]</label>
+        <textcolor>FFCCCCCC</textcolor>
+        <align>center</align>
+        <aligny>center</aligny>
       </control>
       <control type="image">
-        <left>70</left>
+        <left>140</left>
         <top>850</top>
-        <width>1660</width>
+        <width>1520</width>
         <height>14</height>
-        <texture colordiffuse="FF26323D">white.png</texture>
+        <texture colordiffuse="FF666666">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/progress-fill.png</texture>
+      </control>
+      <control type="button" id="107">
+        <left>500</left>
+        <top>895</top>
+        <width>150</width>
+        <height>82</height>
+        <font>font16</font>
+        <label></label>
+        <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
+        <texturenofocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-normal.png</texturenofocus>
+        <align>center</align>
+        <aligny>center</aligny>
+        <textcolor>white</textcolor>
+        <focusedcolor>white</focusedcolor>
+        <onleft>107</onleft>
+        <onright>100</onright>
+        <onup>106</onup>
+        <ondown>107</ondown>
+      </control>
+      <control type="image">
+        <left>553</left>
+        <top>912</top>
+        <width>44</width>
+        <height>48</height>
+        <aspectratio>keep</aspectratio>
+        <texture>$INFO[Window.Property(RepeatIcon)]</texture>
       </control>
       <control type="button" id="100">
         <left>690</left>
@@ -164,7 +243,7 @@
         <aligny>center</aligny>
         <textcolor>white</textcolor>
         <focusedcolor>white</focusedcolor>
-        <onleft>100</onleft>
+        <onleft>107</onleft>
         <onright>101</onright>
         <onup>106</onup>
         <ondown>100</ondown>
@@ -201,7 +280,7 @@
         <textcolor>white</textcolor>
         <focusedcolor>white</focusedcolor>
         <onleft>101</onleft>
-        <onright>105</onright>
+        <onright>109</onright>
         <onup>106</onup>
         <ondown>103</ondown>
       </control>
@@ -214,7 +293,7 @@
         <visible>false</visible>
       </control>
       <control type="button" id="105">
-        <left>1160</left>
+        <left>1260</left>
         <top>895</top>
         <width>100</width>
         <height>82</height>
@@ -226,13 +305,39 @@
         <aligny>center</aligny>
         <textcolor>white</textcolor>
         <focusedcolor>white</focusedcolor>
-        <onleft>103</onleft>
+        <onleft>109</onleft>
         <onright>105</onright>
         <onup>106</onup>
         <ondown>105</ondown>
       </control>
+      <control type="button" id="109">
+        <left>1130</left>
+        <top>895</top>
+        <width>120</width>
+        <height>82</height>
+        <font>font16</font>
+        <label></label>
+        <texturefocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-focus.png</texturefocus>
+        <texturenofocus>special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/button-normal.png</texturenofocus>
+        <align>center</align>
+        <aligny>center</aligny>
+        <textcolor>white</textcolor>
+        <focusedcolor>white</focusedcolor>
+        <onleft>103</onleft>
+        <onright>105</onright>
+        <onup>106</onup>
+        <ondown>109</ondown>
+      </control>
       <control type="image">
-        <left>1190</left>
+        <left>1168</left>
+        <top>912</top>
+        <width>44</width>
+        <height>48</height>
+        <aspectratio>keep</aspectratio>
+        <texture>$INFO[Window.Property(ShuffleIcon)]</texture>
+      </control>
+      <control type="image">
+        <left>1290</left>
         <top>916</top>
         <width>40</width>
         <height>40</height>
@@ -243,7 +348,7 @@
         <left>1230</left>
         <top>72</top>
         <width>570</width>
-        <height>900</height>
+        <height>778</height>
         <visible>String.IsEqual(Window.Property(PlaylistVisible),true)</visible>
         <animation effect="fade" start="0" end="100" time="220">Visible</animation>
         <animation effect="fade" start="100" end="0" time="180">Hidden</animation>
@@ -251,7 +356,7 @@
           <left>0</left>
           <top>0</top>
           <width>570</width>
-          <height>900</height>
+          <height>778</height>
           <texture colordiffuse="E61B1B1B">white.png</texture>
         </control>
         <control type="label">
@@ -286,7 +391,7 @@
           <left>12</left>
           <top>70</top>
           <width>546</width>
-          <height>815</height>
+          <height>708</height>
           <itemlayout height="54">
             <control type="label">
               <left>10</left>
@@ -309,8 +414,8 @@
               <textcolor>FFFFB092</textcolor>
             </control>
           </focusedlayout>
-          <onleft>100</onleft>
-          <onright>101</onright>
+          <onleft>106</onleft>
+          <onright>106</onright>
           <onup>300</onup>
           <ondown>300</ondown>
         </control>

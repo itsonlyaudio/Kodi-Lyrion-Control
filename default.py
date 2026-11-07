@@ -46,13 +46,15 @@ MAX_ARTWORK_BYTES = 20 * 1024 * 1024
 BLUR_SOURCE_SIZE = (480, 270)
 BLUR_RADIUS = 18
 COVER_CORNER_RADIUS_RATIO = 22 / 650
+BACKDROP_SIZE = (960, 540)
+COVER_MAX_SIZE = 800
+PREFETCH_AHEAD = 3
+CACHE_KEEP_COVERS = 100
 ACCENT_DEFAULT = "FFFFB092"
 ACCENT_GREY_COVER = "FF1976D2"
 ACCENT_VALUE = 0.8235
 ACCENT_MAX_SATURATION = 0.8
 PROGRESS_TRACK_ALPHA = "40"
-VOLUME_FILL_ALPHA = "6B"
-VOLUME_DOT_ALPHA = "80"
 
 
 def parse_discovery_response(packet, address):
@@ -522,21 +524,11 @@ def split_color_boxes(boxes, key, target):
         iterations += 1
 
 
-def quantize_colors(pixels, max_colors):
-    histogram = {}
-    low = [1000000] * 3
-    high = [0] * 3
-    for pixel in pixels:
-        key = (pixel[0] >> 3, pixel[1] >> 3, pixel[2] >> 3)
-        histogram[key] = histogram.get(key, 0) + 1
-        for channel in range(3):
-            if low[channel] > key[channel]:
-                low[channel] = key[channel]
-            elif key[channel] > high[channel]:
-                high[channel] = key[channel]
-    if not histogram:
+def quantize_colors(points, max_colors):
+    if not points:
         return []
-    points = [(key[0], key[1], key[2], count) for key, count in histogram.items()]
+    low = [min(point[channel] for point in points) for channel in range(3)]
+    high = [max(point[channel] for point in points) for channel in range(3)]
     boxes = [
         ColorBox(
             [low[0], high[0], low[1], high[1], low[2], high[2]],
@@ -548,7 +540,28 @@ def quantize_colors(pixels, max_colors):
         boxes, lambda box: box.count() * box.volume(), max_colors - len(boxes)
     )
     boxes.sort(key=lambda box: box.count() * box.volume(), reverse=True)
-    return [box.average() for box in boxes]
+    return [(box.average(), box.count()) for box in boxes]
+
+
+def sampled_color_histogram(image):
+    from PIL import Image, ImageChops
+
+    data = image.tobytes()
+    channels = []
+    for offset in range(3):
+        samples = data[offset::15]
+        channels.append(Image.frombytes("L", (len(samples), 1), samples))
+    bright = [channel.point(lambda value: 255 if value > 250 else 0) for channel in channels]
+    near_white = ImageChops.darker(ImageChops.darker(bright[0], bright[1]), bright[2])
+    binned = Image.merge(
+        "RGB", [channel.point(lambda value: value >> 3) for channel in channels]
+    )
+    binned.paste((255, 255, 255), mask=near_white)
+    return [
+        (color[0], color[1], color[2], count)
+        for count, color in binned.getcolors(32769)
+        if color != (255, 255, 255)
+    ]
 
 
 VIBRANT_SWATCHES = (
@@ -567,12 +580,7 @@ VIBRANT_PREFERENCE = (
 def pick_accent_color(image):
     # Mirrors LMS-Material: Vibrant swatches of the cover, sampling every fifth
     # pixel, taking the first swatch in each range, then fixing brightness.
-    data = image.tobytes()
-    pixels = [
-        pixel
-        for pixel in zip(data[0::15], data[1::15], data[2::15])
-        if not (pixel[0] > 250 and pixel[1] > 250 and pixel[2] > 250)
-    ]
+    points = sampled_color_histogram(image)
     sample = image.copy()
     sample.thumbnail((64, 64))
     sample_data = sample.tobytes()
@@ -582,11 +590,11 @@ def pick_accent_color(image):
         for channel in range(3)
     ]
 
-    swatches = quantize_colors(pixels, 64)
+    swatches = quantize_colors(points, 64)
     taken = set()
     chosen = {}
     for name, (_, min_luma, max_luma), (min_saturation, max_saturation) in VIBRANT_SWATCHES:
-        for index, rgb in enumerate(swatches):
+        for index, (rgb, population) in enumerate(swatches):
             _, luma, saturation = colorsys.rgb_to_hls(
                 rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
             )
@@ -596,9 +604,16 @@ def pick_accent_color(image):
                 and min_luma <= luma <= max_luma
             ):
                 taken.add(index)
-                chosen[name] = rgb
+                chosen[name] = (rgb, population)
                 break
-    swatch = next((chosen[name] for name in VIBRANT_PREFERENCE if name in chosen), None)
+    swatch = next(
+        (
+            chosen[name][0]
+            for name in VIBRANT_PREFERENCE
+            if name in chosen and chosen[name][1] > 0
+        ),
+        None,
+    )
     if swatch is None or is_grey(average) or is_grey(swatch):
         return ACCENT_GREY_COVER
     hue, saturation, _ = colorsys.rgb_to_hsv(
@@ -622,6 +637,52 @@ def read_accent_color(path):
     except (OSError, ValueError):
         pass
     return ACCENT_DEFAULT
+
+
+def rounded_corner_mask(Image, ImageDraw, size, radius):
+    mask = Image.new("L", size, 255)
+    if radius <= 0:
+        return mask
+    supersample = 4
+    circle = Image.new("L", (2 * radius * supersample,) * 2, 0)
+    ImageDraw.Draw(circle).ellipse(
+        (0, 0, circle.width - 1, circle.height - 1), fill=255
+    )
+    circle = circle.resize(
+        (2 * radius, 2 * radius), getattr(Image, "Resampling", Image).LANCZOS
+    )
+    corner = circle.crop((0, 0, radius, radius))
+    flip_x = getattr(Image, "Transpose", Image).FLIP_LEFT_RIGHT
+    flip_y = getattr(Image, "Transpose", Image).FLIP_TOP_BOTTOM
+    width, height = size
+    mask.paste(corner, (0, 0))
+    mask.paste(corner.transpose(flip_x), (width - radius, 0))
+    mask.paste(corner.transpose(flip_y), (0, height - radius))
+    mask.paste(corner.transpose(flip_x).transpose(flip_y), (width - radius, height - radius))
+    return mask
+
+
+def prune_artwork_cache(cache_dir, keep=CACHE_KEEP_COVERS):
+    groups = {}
+    try:
+        names = os.listdir(cache_dir)
+    except OSError:
+        return
+    for name in names:
+        path = os.path.join(cache_dir, name)
+        try:
+            modified = os.path.getmtime(path)
+        except OSError:
+            continue
+        group = groups.setdefault(name[:64], [0.0, []])
+        group[0] = max(group[0], modified)
+        group[1].append(path)
+    for _, paths in sorted(groups.values(), key=lambda g: g[0], reverse=True)[keep:]:
+        for path in paths:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
 
 def sized_artwork_url(url):
@@ -668,20 +729,18 @@ def create_blurred_artwork(source_url, target_path, cover_path, accent_path, ser
         raise RuntimeError("The artwork image could not be decoded.") from exc
     accent = pick_accent_color(image)
     cover = image.convert("RGBA")
-    supersample = 4
-    mask = Image.new(
-        "L", (cover.width * supersample, cover.height * supersample), 0
-    )
-    ImageDraw.Draw(mask).rounded_rectangle(
-        (0, 0, mask.width - 1, mask.height - 1),
-        radius=round(min(cover.size) * COVER_CORNER_RADIUS_RATIO * supersample),
-        fill=255,
+    cover.thumbnail(
+        (COVER_MAX_SIZE, COVER_MAX_SIZE),
+        getattr(Image, "Resampling", Image).LANCZOS,
     )
     cover.putalpha(
-        mask.resize(cover.size, getattr(Image, "Resampling", Image).LANCZOS)
+        rounded_corner_mask(
+            Image, ImageDraw, cover.size,
+            round(min(cover.size) * COVER_CORNER_RADIUS_RATIO),
+        )
     )
     cover_temporary_path = cover_path + ".tmp"
-    cover.save(cover_temporary_path, format="PNG")
+    cover.save(cover_temporary_path, format="PNG", compress_level=3)
     os.replace(cover_temporary_path, cover_path)
     image.thumbnail(
         BLUR_SOURCE_SIZE,
@@ -689,16 +748,56 @@ def create_blurred_artwork(source_url, target_path, cover_path, accent_path, ser
     )
     image = image.filter(ImageFilter.GaussianBlur(BLUR_RADIUS))
     image = image.resize(
-        (1920, 1080),
-        getattr(Image, "Resampling", Image).LANCZOS,
+        BACKDROP_SIZE,
+        getattr(Image, "Resampling", Image).BILINEAR,
     )
     temporary_path = target_path + ".tmp"
-    image.save(temporary_path, format="JPEG", quality=84, optimize=True)
+    image.save(temporary_path, format="JPEG", quality=85)
     os.replace(temporary_path, target_path)
     with open(accent_path + ".tmp", "w") as handle:
         handle.write(accent)
     os.replace(accent_path + ".tmp", accent_path)
     return accent
+
+
+class RoundedBar:
+    def __init__(self, window, left, top, height, skin_path):
+        self.left = left
+        self.top = top
+        self.radius = height // 2
+        self.left_cap = xbmcgui.ControlImage(
+            left, top, self.radius, height, skin_path + "/bar-cap-left.png"
+        )
+        self.middle = xbmcgui.ControlImage(
+            left + self.radius - 1, top, 1, height, skin_path + "/bar.png"
+        )
+        self.right_cap = xbmcgui.ControlImage(
+            left, top, self.radius, height, skin_path + "/bar-cap-right.png"
+        )
+        self.parts = (self.left_cap, self.middle, self.right_cap)
+        for part in self.parts:
+            window.addControl(part)
+        self.set_width(0)
+
+    def set_color(self, color):
+        for part in self.parts:
+            part.setColorDiffuse(color)
+
+    def set_width(self, width):
+        if width <= 0:
+            for part in self.parts:
+                part.setVisible(False)
+            return
+        width = max(width, 2 * self.radius)
+        inner_width = width - 2 * self.radius
+        self.left_cap.setVisible(True)
+        self.right_cap.setPosition(self.left + width - self.radius, self.top)
+        self.right_cap.setVisible(True)
+        if inner_width > 0:
+            self.middle.setWidth(inner_width + 2)
+            self.middle.setVisible(True)
+        else:
+            self.middle.setVisible(False)
 
 
 def kodi_jsonrpc(method, params):
@@ -743,13 +842,16 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.last_volume_warning_at = 0.0
         self.blur_artwork_url = None
         self.blur_completed_url = None
-        self.blur_result = None
         self.blur_lock = threading.Lock()
-        self.blur_thread = None
+        self.blur_queue = []
+        self.blur_active_url = None
+        self.blur_worker_running = False
+        self.blur_failed = {}
+        self.blur_known = set()
         self.setProperty("PlaylistVisible", "false")
         self.setProperty("RepeatMode", "0")
         self.setProperty("ShuffleMode", "0")
-        progress_path = "{}/resources/skins/Default/1080i/bar.png".format(
+        skin_path = "{}/resources/skins/Default/1080i".format(
             ADDON.getAddonInfo("path")
         )
         self.progress_track = xbmcgui.ControlImage(
@@ -757,22 +859,20 @@ class LyrionWindow(xbmcgui.WindowXML):
             PROGRESS_TOP,
             PROGRESS_WIDTH,
             PROGRESS_HEIGHT,
-            progress_path,
+            skin_path + "/bar-track.png",
         )
         self.addControl(self.progress_track)
         self.progress_track.setColorDiffuse(PROGRESS_TRACK_ALPHA + ACCENT_DEFAULT[2:])
-        self.progress_fill = xbmcgui.ControlImage(
-            PROGRESS_LEFT,
-            PROGRESS_TOP,
-            1,
-            PROGRESS_HEIGHT,
-            progress_path,
+        self.progress_fill = RoundedBar(
+            self, PROGRESS_LEFT, PROGRESS_TOP, PROGRESS_HEIGHT, skin_path
         )
-        self.addControl(self.progress_fill)
-        self.progress_fill.setColorDiffuse("FFFFB092")
-        self.progress_fill.setVisible(False)
-        skin_path = "{}/resources/skins/Default/1080i".format(
-            ADDON.getAddonInfo("path")
+        self.progress_fill.set_color(ACCENT_DEFAULT)
+        self.volume_track = xbmcgui.ControlImage(
+            VOLUME_LEFT,
+            VOLUME_TRACK_TOP,
+            VOLUME_WIDTH,
+            VOLUME_TRACK_HEIGHT,
+            skin_path + "/bar.png",
         )
         self.volume_fill = xbmcgui.ControlImage(
             VOLUME_LEFT,
@@ -788,10 +888,12 @@ class LyrionWindow(xbmcgui.WindowXML):
             VOLUME_DOT_SIZE,
             skin_path + "/volume-dot.png",
         )
+        self.addControl(self.volume_track)
         self.addControl(self.volume_fill)
         self.addControl(self.volume_dot)
-        self.volume_fill.setColorDiffuse(VOLUME_FILL_ALPHA + ACCENT_DEFAULT[2:])
-        self.volume_dot.setColorDiffuse(VOLUME_DOT_ALPHA + ACCENT_DEFAULT[2:])
+        self.volume_track.setColorDiffuse(PROGRESS_TRACK_ALPHA + ACCENT_DEFAULT[2:])
+        self.volume_fill.setColorDiffuse(ACCENT_DEFAULT)
+        self.volume_dot.setColorDiffuse(ACCENT_DEFAULT)
         self.set_volume_display(None)
         previous_owner = self.kodi_window.getProperty(REFRESH_OWNER_PROPERTY)
         self.kodi_window.setProperty(
@@ -989,26 +1091,30 @@ class LyrionWindow(xbmcgui.WindowXML):
             self.playlist_summary_loaded = False
         self.setFocusId(PLAYLIST_CONTROL_ID if visible else 106)
 
+    def artwork_cache_dir(self):
+        cache_dir = xbmcvfs.translatePath(
+            "special://profile/addon_data/plugin.audio.lyrion/blurred-artwork"
+        )
+        if not xbmcvfs.exists(cache_dir) and not xbmcvfs.mkdirs(cache_dir):
+            raise RuntimeError("Could not create the blurred artwork cache.")
+        return cache_dir
+
+    def artwork_cache_paths(self, artwork_url):
+        cache_dir = self.artwork_cache_dir()
+        image_key = hashlib.sha256(artwork_url.encode("utf-8")).hexdigest()
+        return (
+            os.path.join(cache_dir, image_key + ".jpg"),
+            os.path.join(cache_dir, image_key + "-cover.png"),
+            os.path.join(cache_dir, image_key + "-accent-v3.txt"),
+        )
+
+    def artwork_is_cached(self, paths):
+        return all(xbmcvfs.exists(path) for path in paths)
+
     def update_blurred_artwork(self, artwork_url):
         if artwork_url != self.blur_artwork_url:
             self.blur_artwork_url = artwork_url
             self.blur_completed_url = None
-
-        with self.blur_lock:
-            result = self.blur_result
-            self.blur_result = None
-        if result is not None:
-            result_url, result_path, cover_path, accent, error = result
-            if result_url == self.blur_artwork_url:
-                self.blur_completed_url = result_url
-                if error is None:
-                    self.set_artwork(cover_path, result_path, accent)
-                else:
-                    self.set_artwork(result_url, "", ACCENT_DEFAULT)
-                    xbmc.log(
-                        "Lyrion: could not create blurred artwork: {}".format(error),
-                        xbmc.LOGWARNING,
-                    )
 
         if not artwork_url:
             self.set_artwork("", "", ACCENT_DEFAULT)
@@ -1016,65 +1122,99 @@ class LyrionWindow(xbmcgui.WindowXML):
         if artwork_url == self.blur_completed_url:
             return
 
-        cache_dir = xbmcvfs.translatePath(
-            "special://profile/addon_data/plugin.audio.lyrion/blurred-artwork"
+        image_path, cover_path, accent_path = paths = self.artwork_cache_paths(
+            artwork_url
         )
-        if not xbmcvfs.exists(cache_dir) and not xbmcvfs.mkdirs(cache_dir):
-            raise RuntimeError("Could not create the blurred artwork cache.")
-        image_key = hashlib.sha256(artwork_url.encode("utf-8")).hexdigest()
-        image_path = os.path.join(cache_dir, image_key + ".jpg")
-        cover_path = os.path.join(cache_dir, image_key + "-cover.png")
-        accent_path = os.path.join(cache_dir, image_key + "-accent-v2.txt")
-        if (
-            xbmcvfs.exists(image_path)
-            and xbmcvfs.exists(cover_path)
-            and xbmcvfs.exists(accent_path)
-        ):
+        if self.artwork_is_cached(paths):
             self.blur_completed_url = artwork_url
             self.set_artwork(cover_path, image_path, read_accent_color(accent_path))
+            try:
+                os.utime(accent_path, None)
+            except OSError:
+                pass
             return
 
-        if self.blur_thread is None or not self.blur_thread.is_alive():
-            self.blur_thread = threading.Thread(
-                target=self.create_blurred_artwork_worker,
-                args=(artwork_url, image_path, cover_path, accent_path),
-                name="LyrionArtworkBlur",
-                daemon=True,
-            )
-            self.blur_thread.start()
+        with self.blur_lock:
+            failed = artwork_url in self.blur_failed
+        if failed:
+            self.blur_completed_url = artwork_url
+            self.set_artwork(artwork_url, "", ACCENT_DEFAULT)
+            return
+        self.queue_artwork(artwork_url, first=True)
+
+    def prefetch_artwork(self, artwork_urls):
+        for artwork_url in artwork_urls:
+            if not artwork_url or artwork_url in self.blur_known:
+                continue
+            self.blur_known.add(artwork_url)
+            if not self.artwork_is_cached(self.artwork_cache_paths(artwork_url)):
+                self.queue_artwork(artwork_url, first=False)
+
+    def queue_artwork(self, artwork_url, first):
+        with self.blur_lock:
+            if artwork_url in self.blur_failed or artwork_url == self.blur_active_url:
+                return
+            if artwork_url in self.blur_queue:
+                if not first:
+                    return
+                self.blur_queue.remove(artwork_url)
+            if first:
+                self.blur_queue.insert(0, artwork_url)
+            else:
+                self.blur_queue.append(artwork_url)
+            if self.blur_worker_running:
+                return
+            self.blur_worker_running = True
+        threading.Thread(
+            target=self.artwork_worker, name="LyrionArtworkBlur", daemon=True
+        ).start()
 
     def set_artwork(self, artwork, backdrop_path, accent):
         self.setProperty("Artwork", artwork)
         self.setProperty("BlurredArtwork", backdrop_path)
         rgb = accent[2:]
         self.progress_track.setColorDiffuse(PROGRESS_TRACK_ALPHA + rgb)
-        self.progress_fill.setColorDiffuse("FF" + rgb)
-        self.volume_fill.setColorDiffuse(VOLUME_FILL_ALPHA + rgb)
-        self.volume_dot.setColorDiffuse(VOLUME_DOT_ALPHA + rgb)
+        self.progress_fill.set_color("FF" + rgb)
+        self.volume_track.setColorDiffuse(PROGRESS_TRACK_ALPHA + rgb)
+        self.volume_fill.setColorDiffuse("FF" + rgb)
+        self.volume_dot.setColorDiffuse("FF" + rgb)
 
-    def create_blurred_artwork_worker(self, artwork_url, image_path, cover_path, accent_path):
-        error = None
-        accent = ACCENT_DEFAULT
+    def artwork_worker(self):
         try:
-            accent = create_blurred_artwork(
-                artwork_url,
-                image_path,
-                cover_path,
-                accent_path,
-                self.client.base_url,
-                self.client.auth_header,
-            )
-        except (
-            ImportError,
-            OSError,
-            RuntimeError,
-            TimeoutError,
-            urllib.error.URLError,
-            ValueError,
-        ) as exc:
-            error = exc
-        with self.blur_lock:
-            self.blur_result = (artwork_url, image_path, cover_path, accent, error)
+            prune_artwork_cache(self.artwork_cache_dir())
+        except (OSError, RuntimeError):
+            pass
+        while True:
+            with self.blur_lock:
+                if not self.blur_queue:
+                    self.blur_active_url = None
+                    self.blur_worker_running = False
+                    return
+                artwork_url = self.blur_queue.pop(0)
+                self.blur_active_url = artwork_url
+            try:
+                image_path, cover_path, accent_path = self.artwork_cache_paths(
+                    artwork_url
+                )
+                create_blurred_artwork(
+                    artwork_url,
+                    image_path,
+                    cover_path,
+                    accent_path,
+                    self.client.base_url,
+                    self.client.auth_header,
+                )
+            except Exception as exc:
+                with self.blur_lock:
+                    self.blur_failed[artwork_url] = exc
+                xbmc.log(
+                    "Lyrion: could not create blurred artwork: {}".format(exc),
+                    xbmc.LOGWARNING,
+                )
+            if artwork_url == self.blur_artwork_url:
+                xbmc.executebuiltin(
+                    "SendClick({},{})".format(WINDOW_ID, REFRESH_CONTROL_ID)
+                )
 
     def change_lyrion_volume(self, change):
         if self.client is None:
@@ -1333,9 +1473,8 @@ class LyrionWindow(xbmcgui.WindowXML):
             return
         self.setProperty("Volume", "{}%".format(volume))
         fill_width = round(VOLUME_WIDTH * volume / 100.0)
-        visible_fill_width = fill_width - VOLUME_DOT_SIZE // 2
-        if visible_fill_width > 0:
-            self.volume_fill.setWidth(visible_fill_width)
+        if fill_width > 0:
+            self.volume_fill.setWidth(fill_width)
             self.volume_fill.setVisible(True)
         else:
             self.volume_fill.setVisible(False)
@@ -1488,14 +1627,18 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty("PlayPauseButtonLabel", play_pause_label)
         self.setProperty("Position", format_time(position))
         self.setProperty("Duration", format_time(duration))
-        fill_width = round(PROGRESS_WIDTH * progress / 100.0)
-        if fill_width > 0:
-            self.progress_fill.setWidth(fill_width)
-            self.progress_fill.setVisible(duration > 0)
-        else:
-            self.progress_fill.setVisible(False)
+        self.progress_fill.set_width(
+            round(PROGRESS_WIDTH * progress / 100.0) if duration > 0 else 0
+        )
         artwork_url = self.client.artwork_url(current)
         self.update_blurred_artwork(artwork_url)
+        self.prefetch_artwork(
+            [
+                self.client.artwork_url(self.playlist_tracks[index])
+                for index in range(current_index + 1, current_index + 1 + PREFETCH_AHEAD)
+                if index in self.playlist_tracks
+            ]
+        )
         visible_tracks = sorted(self.playlist_tracks.items())
         snapshot = [
             (index, str(track.get("title", "Unknown title")),

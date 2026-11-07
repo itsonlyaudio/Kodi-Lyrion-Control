@@ -62,13 +62,6 @@
         <texture colordiffuse="FFCCCCCC">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/volume-low.png</texture>
       </control>
       <control type="image">
-        <left>1360</left>
-        <top>28</top>
-        <width>200</width>
-        <height>6</height>
-        <texture colordiffuse="15FFFFFF">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/bar.png</texture>
-      </control>
-      <control type="image">
         <left>1584</left>
         <top>17</top>
         <width>28</width>

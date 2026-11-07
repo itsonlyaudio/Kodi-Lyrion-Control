@@ -53,10 +53,33 @@
         <textcolor>white</textcolor>
         <scroll>true</scroll>
       </control>
+      <control type="image">
+        <left>1320</left>
+        <top>17</top>
+        <width>28</width>
+        <height>28</height>
+        <aspectratio>keep</aspectratio>
+        <texture colordiffuse="FFCCCCCC">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/volume-low.png</texture>
+      </control>
+      <control type="image">
+        <left>1360</left>
+        <top>28</top>
+        <width>200</width>
+        <height>6</height>
+        <texture colordiffuse="15FFFFFF">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/bar.png</texture>
+      </control>
+      <control type="image">
+        <left>1584</left>
+        <top>17</top>
+        <width>28</width>
+        <height>28</height>
+        <aspectratio>keep</aspectratio>
+        <texture colordiffuse="FFCCCCCC">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/volume-high.png</texture>
+      </control>
       <control type="label">
-        <left>1390</left>
+        <left>1620</left>
         <top>0</top>
-        <width>300</width>
+        <width>70</width>
         <height>62</height>
         <font>font24</font>
         <label>$INFO[Window.Property(Volume)]</label>
@@ -96,8 +119,6 @@
         <height>650</height>
         <aspectratio>keep</aspectratio>
         <texture>$INFO[Window.Property(Artwork)]</texture>
-        <bordertexture border="2">white.png</bordertexture>
-        <bordersize>2</bordersize>
       </control>
       <control type="label">
         <left>730</left>
@@ -254,13 +275,6 @@
         <textcolor>FFCCCCCC</textcolor>
         <align>center</align>
         <aligny>center</aligny>
-      </control>
-      <control type="image">
-        <left>140</left>
-        <top>850</top>
-        <width>1520</width>
-        <height>14</height>
-        <texture colordiffuse="FF666666">special://home/addons/plugin.audio.lyrion/resources/skins/Default/1080i/progress-fill.png</texture>
       </control>
       <control type="button" id="107">
         <left>500</left>

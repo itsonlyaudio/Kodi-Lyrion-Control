@@ -1,4 +1,5 @@
 import base64
+import colorsys
 import hashlib
 import io
 import json
@@ -33,11 +34,25 @@ PROGRESS_LEFT = 60 + 140
 PROGRESS_TOP = 35 + 850
 PROGRESS_WIDTH = 1520
 PROGRESS_HEIGHT = 14
+VOLUME_LEFT = 60 + 1360
+VOLUME_TRACK_TOP = 35 + 28
+VOLUME_WIDTH = 200
+VOLUME_TRACK_HEIGHT = 6
+VOLUME_DOT_SIZE = 20
+VOLUME_DOT_TOP = 35 + 31 - VOLUME_DOT_SIZE // 2
 WINDOW_ID = 11000
 REFRESH_OWNER_PROPERTY = "LyrionRefreshOwner"
 MAX_ARTWORK_BYTES = 20 * 1024 * 1024
 BLUR_SOURCE_SIZE = (480, 270)
 BLUR_RADIUS = 18
+COVER_CORNER_RADIUS_RATIO = 22 / 650
+ACCENT_DEFAULT = "FFFFB092"
+ACCENT_GREY_COVER = "FF1976D2"
+ACCENT_VALUE = 0.8235
+ACCENT_MAX_SATURATION = 0.8
+PROGRESS_TRACK_ALPHA = "40"
+VOLUME_FILL_ALPHA = "6B"
+VOLUME_DOT_ALPHA = "80"
 
 
 def parse_discovery_response(packet, address):
@@ -367,12 +382,6 @@ def format_playlist_time(value):
     return format_time(seconds)
 
 
-def format_volume_db(volume):
-    if volume == 0:
-        return "-inf dB"
-    return "{:.1f} dB".format(20 * math.log10(volume / 100.0))
-
-
 def get_playlist(data):
     playlist = data.get("playlist_loop", [])
     if isinstance(playlist, dict):
@@ -407,22 +416,248 @@ class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
         return redirected
 
 
-def create_blurred_artwork(source_url, target_path, cover_path, server_url, auth_header):
-    from PIL import Image, ImageFilter
+def is_grey(rgb):
+    return (
+        abs(rgb[0] - rgb[1]) < 2
+        and abs(rgb[0] - rgb[2]) < 2
+        and abs(rgb[1] - rgb[2]) < 2
+    )
 
-    headers = {}
+
+class ColorBox:
+    def __init__(self, ranges, points):
+        self.ranges = ranges
+        self.points = points
+        self._count = None
+        self._volume = None
+
+    def count(self):
+        if self._count is None:
+            self._count = sum(point[3] for point in self.points)
+        return self._count
+
+    def volume(self):
+        if not self._volume:
+            r1, r2, g1, g2, b1, b2 = self.ranges
+            self._volume = (r2 - r1 + 1) * (g2 - g1 + 1) * (b2 - b1 + 1)
+        return self._volume
+
+    def average(self):
+        step = 8
+        total = red = green = blue = 0
+        for point_r, point_g, point_b, population in self.points:
+            total += population
+            red += population * (point_r + 0.5) * step
+            green += population * (point_g + 0.5) * step
+            blue += population * (point_b + 0.5) * step
+        if total:
+            return (int(red / total), int(green / total), int(blue / total))
+        r1, r2, g1, g2, b1, b2 = self.ranges
+        return (
+            int(step * (r1 + r2 + 1) / 2),
+            int(step * (g1 + g2 + 1) / 2),
+            int(step * (b1 + b2 + 1) / 2),
+        )
+
+
+def split_color_box(box):
+    r1, r2, g1, g2, b1, b2 = box.ranges
+    extents = (r2 - r1 + 1, g2 - g1 + 1, b2 - b1 + 1)
+    if box.count() == 1:
+        return [ColorBox(list(box.ranges), box.points)]
+    axis = 0 if max(extents) == extents[0] else 1 if max(extents) == extents[1] else 2
+    low, high = box.ranges[axis * 2], box.ranges[axis * 2 + 1]
+    population_by_slice = {}
+    for point in box.points:
+        population_by_slice[point[axis]] = (
+            population_by_slice.get(point[axis], 0) + point[3]
+        )
+    cumulative = {}
+    total = 0
+    for position in range(low, high + 1):
+        total += population_by_slice.get(position, 0)
+        cumulative[position] = total
+    for position in range(low, high + 1):
+        if cumulative[position] <= total / 2:
+            continue
+        left = position - low
+        right = high - position
+        if right >= left:
+            cut = min(high - 1, int(position + right / 2))
+        else:
+            cut = max(low, int(position - 1 - left / 2))
+        while not cumulative.get(cut):
+            cut += 1
+        remaining = total - cumulative[cut]
+        while not remaining and cumulative.get(cut - 1):
+            cut -= 1
+            remaining = total - cumulative[cut]
+        first, second = list(box.ranges), list(box.ranges)
+        first[axis * 2 + 1] = cut
+        second[axis * 2] = cut + 1
+        return [
+            ColorBox(first, [p for p in box.points if p[axis] <= cut]),
+            ColorBox(second, [p for p in box.points if p[axis] > cut]),
+        ]
+    return []
+
+
+def split_color_boxes(boxes, key, target):
+    colors = 1
+    iterations = 0
+    while iterations < 1000:
+        boxes.sort(key=key)
+        box = boxes.pop()
+        if not box.count():
+            boxes.append(box)
+            iterations += 1
+            continue
+        parts = split_color_box(box)
+        if not parts:
+            return
+        boxes.extend(parts)
+        colors += len(parts) - 1
+        if colors >= target:
+            return
+        iterations += 1
+
+
+def quantize_colors(pixels, max_colors):
+    histogram = {}
+    low = [1000000] * 3
+    high = [0] * 3
+    for pixel in pixels:
+        key = (pixel[0] >> 3, pixel[1] >> 3, pixel[2] >> 3)
+        histogram[key] = histogram.get(key, 0) + 1
+        for channel in range(3):
+            if low[channel] > key[channel]:
+                low[channel] = key[channel]
+            elif key[channel] > high[channel]:
+                high[channel] = key[channel]
+    if not histogram:
+        return []
+    points = [(key[0], key[1], key[2], count) for key, count in histogram.items()]
+    boxes = [
+        ColorBox(
+            [low[0], high[0], low[1], high[1], low[2], high[2]],
+            points,
+        )
+    ]
+    split_color_boxes(boxes, lambda box: box.count(), 0.75 * max_colors)
+    split_color_boxes(
+        boxes, lambda box: box.count() * box.volume(), max_colors - len(boxes)
+    )
+    boxes.sort(key=lambda box: box.count() * box.volume(), reverse=True)
+    return [box.average() for box in boxes]
+
+
+VIBRANT_SWATCHES = (
+    ("Vibrant", (0.5, 0.3, 0.7), (0.35, 1.0)),
+    ("LightVibrant", (0.74, 0.55, 1.0), (0.35, 1.0)),
+    ("DarkVibrant", (0.26, 0.0, 0.45), (0.35, 1.0)),
+    ("Muted", (0.5, 0.3, 0.7), (0.0, 0.4)),
+    ("LightMuted", (0.74, 0.55, 1.0), (0.0, 0.4)),
+    ("DarkMuted", (0.26, 0.0, 0.45), (0.0, 0.4)),
+)
+VIBRANT_PREFERENCE = (
+    "Vibrant", "LightVibrant", "Muted", "LightMuted", "DarkVibrant", "DarkMuted"
+)
+
+
+def pick_accent_color(image):
+    # Mirrors LMS-Material: Vibrant swatches of the cover, sampling every fifth
+    # pixel, taking the first swatch in each range, then fixing brightness.
+    data = image.tobytes()
+    pixels = [
+        pixel
+        for pixel in zip(data[0::15], data[1::15], data[2::15])
+        if not (pixel[0] > 250 and pixel[1] > 250 and pixel[2] > 250)
+    ]
+    sample = image.copy()
+    sample.thumbnail((64, 64))
+    sample_data = sample.tobytes()
+    average = [
+        math.sqrt(sum(value * value for value in sample_data[channel::3])
+                  / (len(sample_data) / 3))
+        for channel in range(3)
+    ]
+
+    swatches = quantize_colors(pixels, 64)
+    taken = set()
+    chosen = {}
+    for name, (_, min_luma, max_luma), (min_saturation, max_saturation) in VIBRANT_SWATCHES:
+        for index, rgb in enumerate(swatches):
+            _, luma, saturation = colorsys.rgb_to_hls(
+                rgb[0] / 255.0, rgb[1] / 255.0, rgb[2] / 255.0
+            )
+            if (
+                index not in taken
+                and min_saturation <= saturation <= max_saturation
+                and min_luma <= luma <= max_luma
+            ):
+                taken.add(index)
+                chosen[name] = rgb
+                break
+    swatch = next((chosen[name] for name in VIBRANT_PREFERENCE if name in chosen), None)
+    if swatch is None or is_grey(average) or is_grey(swatch):
+        return ACCENT_GREY_COVER
+    hue, saturation, _ = colorsys.rgb_to_hsv(
+        swatch[0] / 255.0, swatch[1] / 255.0, swatch[2] / 255.0
+    )
+    red, green, blue = colorsys.hsv_to_rgb(
+        hue, min(saturation, ACCENT_MAX_SATURATION), ACCENT_VALUE
+    )
+    return "FF{:02X}{:02X}{:02X}".format(
+        round(red * 255), round(green * 255), round(blue * 255)
+    )
+
+
+def read_accent_color(path):
+    try:
+        with open(path, "r") as handle:
+            value = handle.read().strip()
+        if len(value) == 8:
+            int(value, 16)
+            return value.upper()
+    except (OSError, ValueError):
+        pass
+    return ACCENT_DEFAULT
+
+
+def sized_artwork_url(url):
+    for suffix in ("/image.jpg", "/cover.jpg"):
+        if url.endswith(suffix):
+            return url[:-len(".jpg")] + "_1024x1024_f"
+    return url
+
+
+def create_blurred_artwork(source_url, target_path, cover_path, accent_path, server_url, auth_header):
+    from PIL import Image, ImageDraw, ImageFilter
+
     source = urllib.parse.urlsplit(source_url)
     server = urllib.parse.urlsplit(server_url)
     if source.scheme not in ("http", "https"):
         raise RuntimeError("Artwork URL must use HTTP or HTTPS.")
+    headers = {}
     if auth_header and (source.scheme, source.netloc) == (server.scheme, server.netloc):
         headers["Authorization"] = auth_header
-    request = urllib.request.Request(source_url, headers=headers)
     opener = urllib.request.build_opener(SameOriginRedirectHandler())
-    with opener.open(request, timeout=10) as response:
-        image_data = response.read(MAX_ARTWORK_BYTES + 1)
-    if len(image_data) > MAX_ARTWORK_BYTES:
-        raise RuntimeError("Artwork image exceeds the 20 MB processing limit.")
+
+    def download(url):
+        request = urllib.request.Request(url, headers=headers)
+        with opener.open(request, timeout=10) as response:
+            data = response.read(MAX_ARTWORK_BYTES + 1)
+        if len(data) > MAX_ARTWORK_BYTES:
+            raise RuntimeError("Artwork image exceeds the 20 MB processing limit.")
+        return data
+
+    sized_url = sized_artwork_url(source_url)
+    try:
+        image_data = download(sized_url)
+    except (urllib.error.URLError, TimeoutError):
+        if sized_url == source_url:
+            raise
+        image_data = download(source_url)
 
     try:
         with Image.open(io.BytesIO(image_data)) as source_image:
@@ -431,8 +666,22 @@ def create_blurred_artwork(source_url, target_path, cover_path, server_url, auth
             image = source_image.convert("RGB")
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise RuntimeError("The artwork image could not be decoded.") from exc
+    accent = pick_accent_color(image)
+    cover = image.convert("RGBA")
+    supersample = 4
+    mask = Image.new(
+        "L", (cover.width * supersample, cover.height * supersample), 0
+    )
+    ImageDraw.Draw(mask).rounded_rectangle(
+        (0, 0, mask.width - 1, mask.height - 1),
+        radius=round(min(cover.size) * COVER_CORNER_RADIUS_RATIO * supersample),
+        fill=255,
+    )
+    cover.putalpha(
+        mask.resize(cover.size, getattr(Image, "Resampling", Image).LANCZOS)
+    )
     cover_temporary_path = cover_path + ".tmp"
-    image.save(cover_temporary_path, format="JPEG", quality=92)
+    cover.save(cover_temporary_path, format="PNG")
     os.replace(cover_temporary_path, cover_path)
     image.thumbnail(
         BLUR_SOURCE_SIZE,
@@ -446,6 +695,10 @@ def create_blurred_artwork(source_url, target_path, cover_path, server_url, auth
     temporary_path = target_path + ".tmp"
     image.save(temporary_path, format="JPEG", quality=84, optimize=True)
     os.replace(temporary_path, target_path)
+    with open(accent_path + ".tmp", "w") as handle:
+        handle.write(accent)
+    os.replace(accent_path + ".tmp", accent_path)
+    return accent
 
 
 def kodi_jsonrpc(method, params):
@@ -496,9 +749,18 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.setProperty("PlaylistVisible", "false")
         self.setProperty("RepeatMode", "0")
         self.setProperty("ShuffleMode", "0")
-        progress_path = "{}/resources/skins/Default/1080i/progress-fill.png".format(
+        progress_path = "{}/resources/skins/Default/1080i/bar.png".format(
             ADDON.getAddonInfo("path")
         )
+        self.progress_track = xbmcgui.ControlImage(
+            PROGRESS_LEFT,
+            PROGRESS_TOP,
+            PROGRESS_WIDTH,
+            PROGRESS_HEIGHT,
+            progress_path,
+        )
+        self.addControl(self.progress_track)
+        self.progress_track.setColorDiffuse(PROGRESS_TRACK_ALPHA + ACCENT_DEFAULT[2:])
         self.progress_fill = xbmcgui.ControlImage(
             PROGRESS_LEFT,
             PROGRESS_TOP,
@@ -509,6 +771,28 @@ class LyrionWindow(xbmcgui.WindowXML):
         self.addControl(self.progress_fill)
         self.progress_fill.setColorDiffuse("FFFFB092")
         self.progress_fill.setVisible(False)
+        skin_path = "{}/resources/skins/Default/1080i".format(
+            ADDON.getAddonInfo("path")
+        )
+        self.volume_fill = xbmcgui.ControlImage(
+            VOLUME_LEFT,
+            VOLUME_TRACK_TOP,
+            1,
+            VOLUME_TRACK_HEIGHT,
+            skin_path + "/bar.png",
+        )
+        self.volume_dot = xbmcgui.ControlImage(
+            VOLUME_LEFT,
+            VOLUME_DOT_TOP,
+            VOLUME_DOT_SIZE,
+            VOLUME_DOT_SIZE,
+            skin_path + "/volume-dot.png",
+        )
+        self.addControl(self.volume_fill)
+        self.addControl(self.volume_dot)
+        self.volume_fill.setColorDiffuse(VOLUME_FILL_ALPHA + ACCENT_DEFAULT[2:])
+        self.volume_dot.setColorDiffuse(VOLUME_DOT_ALPHA + ACCENT_DEFAULT[2:])
+        self.set_volume_display(None)
         previous_owner = self.kodi_window.getProperty(REFRESH_OWNER_PROPERTY)
         self.kodi_window.setProperty(
             REFRESH_OWNER_PROPERTY, self.refresh_owner_token
@@ -714,20 +998,20 @@ class LyrionWindow(xbmcgui.WindowXML):
             result = self.blur_result
             self.blur_result = None
         if result is not None:
-            result_url, result_path, cover_path, error = result
+            result_url, result_path, cover_path, accent, error = result
             if result_url == self.blur_artwork_url:
                 self.blur_completed_url = result_url
                 if error is None:
-                    self.set_artwork(cover_path, result_path)
+                    self.set_artwork(cover_path, result_path, accent)
                 else:
-                    self.set_artwork(result_url, "")
+                    self.set_artwork(result_url, "", ACCENT_DEFAULT)
                     xbmc.log(
                         "Lyrion: could not create blurred artwork: {}".format(error),
                         xbmc.LOGWARNING,
                     )
 
         if not artwork_url:
-            self.set_artwork("", "")
+            self.set_artwork("", "", ACCENT_DEFAULT)
             return
         if artwork_url == self.blur_completed_url:
             return
@@ -739,32 +1023,44 @@ class LyrionWindow(xbmcgui.WindowXML):
             raise RuntimeError("Could not create the blurred artwork cache.")
         image_key = hashlib.sha256(artwork_url.encode("utf-8")).hexdigest()
         image_path = os.path.join(cache_dir, image_key + ".jpg")
-        cover_path = os.path.join(cache_dir, image_key + "-cover.jpg")
-        if xbmcvfs.exists(image_path) and xbmcvfs.exists(cover_path):
+        cover_path = os.path.join(cache_dir, image_key + "-cover.png")
+        accent_path = os.path.join(cache_dir, image_key + "-accent-v2.txt")
+        if (
+            xbmcvfs.exists(image_path)
+            and xbmcvfs.exists(cover_path)
+            and xbmcvfs.exists(accent_path)
+        ):
             self.blur_completed_url = artwork_url
-            self.set_artwork(cover_path, image_path)
+            self.set_artwork(cover_path, image_path, read_accent_color(accent_path))
             return
 
         if self.blur_thread is None or not self.blur_thread.is_alive():
             self.blur_thread = threading.Thread(
                 target=self.create_blurred_artwork_worker,
-                args=(artwork_url, image_path, cover_path),
+                args=(artwork_url, image_path, cover_path, accent_path),
                 name="LyrionArtworkBlur",
                 daemon=True,
             )
             self.blur_thread.start()
 
-    def set_artwork(self, artwork, backdrop_path):
+    def set_artwork(self, artwork, backdrop_path, accent):
         self.setProperty("Artwork", artwork)
         self.setProperty("BlurredArtwork", backdrop_path)
+        rgb = accent[2:]
+        self.progress_track.setColorDiffuse(PROGRESS_TRACK_ALPHA + rgb)
+        self.progress_fill.setColorDiffuse("FF" + rgb)
+        self.volume_fill.setColorDiffuse(VOLUME_FILL_ALPHA + rgb)
+        self.volume_dot.setColorDiffuse(VOLUME_DOT_ALPHA + rgb)
 
-    def create_blurred_artwork_worker(self, artwork_url, image_path, cover_path):
+    def create_blurred_artwork_worker(self, artwork_url, image_path, cover_path, accent_path):
         error = None
+        accent = ACCENT_DEFAULT
         try:
-            create_blurred_artwork(
+            accent = create_blurred_artwork(
                 artwork_url,
                 image_path,
                 cover_path,
+                accent_path,
                 self.client.base_url,
                 self.client.auth_header,
             )
@@ -778,7 +1074,7 @@ class LyrionWindow(xbmcgui.WindowXML):
         ) as exc:
             error = exc
         with self.blur_lock:
-            self.blur_result = (artwork_url, image_path, cover_path, error)
+            self.blur_result = (artwork_url, image_path, cover_path, accent, error)
 
     def change_lyrion_volume(self, change):
         if self.client is None:
@@ -1011,7 +1307,7 @@ class LyrionWindow(xbmcgui.WindowXML):
             try:
                 volume = self.client.volume()
             except RuntimeError as exc:
-                self.setProperty("Volume", "Volume unavailable")
+                self.set_volume_display(None)
                 now = time.monotonic()
                 if now - self.last_volume_warning_at >= 60:
                     xbmc.log(
@@ -1020,7 +1316,7 @@ class LyrionWindow(xbmcgui.WindowXML):
                     )
                     self.last_volume_warning_at = now
             else:
-                self.setProperty("Volume", "Volume {}".format(format_volume_db(volume)))
+                self.set_volume_display(volume)
             self.setProperty("Error", "")
         except (RuntimeError, ValueError) as exc:
             self.setProperty("Error", str(exc))
@@ -1028,6 +1324,25 @@ class LyrionWindow(xbmcgui.WindowXML):
                 "Lyrion: playback refresh failed: {}".format(exc),
                 xbmc.LOGWARNING,
             )
+
+    def set_volume_display(self, volume):
+        if volume is None:
+            self.setProperty("Volume", "")
+            self.volume_fill.setVisible(False)
+            self.volume_dot.setVisible(False)
+            return
+        self.setProperty("Volume", "{}%".format(volume))
+        fill_width = round(VOLUME_WIDTH * volume / 100.0)
+        visible_fill_width = fill_width - VOLUME_DOT_SIZE // 2
+        if visible_fill_width > 0:
+            self.volume_fill.setWidth(visible_fill_width)
+            self.volume_fill.setVisible(True)
+        else:
+            self.volume_fill.setVisible(False)
+        self.volume_dot.setPosition(
+            VOLUME_LEFT + fill_width - VOLUME_DOT_SIZE // 2, VOLUME_DOT_TOP
+        )
+        self.volume_dot.setVisible(True)
 
     def load_playlist_page(self, direction):
         if self.client is None or not self.playlist_tracks or self.playlist_total <= 0:

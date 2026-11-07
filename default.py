@@ -407,7 +407,7 @@ class SameOriginRedirectHandler(urllib.request.HTTPRedirectHandler):
         return redirected
 
 
-def create_blurred_artwork(source_url, target_path, server_url, auth_header):
+def create_blurred_artwork(source_url, target_path, cover_path, server_url, auth_header):
     from PIL import Image, ImageFilter
 
     headers = {}
@@ -431,6 +431,9 @@ def create_blurred_artwork(source_url, target_path, server_url, auth_header):
             image = source_image.convert("RGB")
     except (OSError, ValueError, Image.DecompressionBombError) as exc:
         raise RuntimeError("The artwork image could not be decoded.") from exc
+    cover_temporary_path = cover_path + ".tmp"
+    image.save(cover_temporary_path, format="JPEG", quality=92)
+    os.replace(cover_temporary_path, cover_path)
     image.thumbnail(
         BLUR_SOURCE_SIZE,
         getattr(Image, "Resampling", Image).LANCZOS,
@@ -711,11 +714,11 @@ class LyrionWindow(xbmcgui.WindowXML):
             result = self.blur_result
             self.blur_result = None
         if result is not None:
-            result_url, result_path, error = result
+            result_url, result_path, cover_path, error = result
             if result_url == self.blur_artwork_url:
                 self.blur_completed_url = result_url
                 if error is None:
-                    self.set_artwork(result_url, result_path)
+                    self.set_artwork(cover_path, result_path)
                 else:
                     self.set_artwork(result_url, "")
                     xbmc.log(
@@ -734,34 +737,34 @@ class LyrionWindow(xbmcgui.WindowXML):
         )
         if not xbmcvfs.exists(cache_dir) and not xbmcvfs.mkdirs(cache_dir):
             raise RuntimeError("Could not create the blurred artwork cache.")
-        image_name = hashlib.sha256(
-            artwork_url.encode("utf-8")
-        ).hexdigest() + ".jpg"
-        image_path = os.path.join(cache_dir, image_name)
-        if xbmcvfs.exists(image_path):
+        image_key = hashlib.sha256(artwork_url.encode("utf-8")).hexdigest()
+        image_path = os.path.join(cache_dir, image_key + ".jpg")
+        cover_path = os.path.join(cache_dir, image_key + "-cover.jpg")
+        if xbmcvfs.exists(image_path) and xbmcvfs.exists(cover_path):
             self.blur_completed_url = artwork_url
-            self.set_artwork(artwork_url, image_path)
+            self.set_artwork(cover_path, image_path)
             return
 
         if self.blur_thread is None or not self.blur_thread.is_alive():
             self.blur_thread = threading.Thread(
                 target=self.create_blurred_artwork_worker,
-                args=(artwork_url, image_path),
+                args=(artwork_url, image_path, cover_path),
                 name="LyrionArtworkBlur",
                 daemon=True,
             )
             self.blur_thread.start()
 
-    def set_artwork(self, artwork_url, backdrop_path):
-        self.setProperty("Artwork", artwork_url)
+    def set_artwork(self, artwork, backdrop_path):
+        self.setProperty("Artwork", artwork)
         self.setProperty("BlurredArtwork", backdrop_path)
 
-    def create_blurred_artwork_worker(self, artwork_url, image_path):
+    def create_blurred_artwork_worker(self, artwork_url, image_path, cover_path):
         error = None
         try:
             create_blurred_artwork(
                 artwork_url,
                 image_path,
+                cover_path,
                 self.client.base_url,
                 self.client.auth_header,
             )
@@ -775,7 +778,7 @@ class LyrionWindow(xbmcgui.WindowXML):
         ) as exc:
             error = exc
         with self.blur_lock:
-            self.blur_result = (artwork_url, image_path, error)
+            self.blur_result = (artwork_url, image_path, cover_path, error)
 
     def change_lyrion_volume(self, change):
         if self.client is None:

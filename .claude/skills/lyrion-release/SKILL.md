@@ -36,6 +36,11 @@ Install from the attached Kodi 21 ZIP package.
 
 6. Verify with `gh release view v<version>` that the asset name and tag are correct.
 
+## Kodi-side issues
+
+- The `kodi.log` in the repo root is stale (it's from version 1.4.17 on 2026-10-25). Do not diagnose from it.
+- When an issue depends on how Kodi behaves (texture loading, skin rendering, timing), ask the user for a fresh `kodi.log` from a run that reproduces the problem. Kodi does not log texture load timing, so a log may not explain visual timing issues on its own.
+
 ## Notes
 
 - Do not rewrite history or force-push. Revert with a new commit if a commit needs to come out.

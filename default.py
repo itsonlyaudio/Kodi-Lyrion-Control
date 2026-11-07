@@ -706,7 +706,6 @@ class LyrionWindow(xbmcgui.WindowXML):
         if artwork_url != self.blur_artwork_url:
             self.blur_artwork_url = artwork_url
             self.blur_completed_url = None
-            self.setProperty("BlurredArtwork", "")
 
         with self.blur_lock:
             result = self.blur_result
@@ -716,32 +715,35 @@ class LyrionWindow(xbmcgui.WindowXML):
             if result_url == self.blur_artwork_url:
                 self.blur_completed_url = result_url
                 if error is None:
-                    self.setProperty("BlurredArtwork", result_path)
+                    self.set_artwork(result_url, result_path)
                 else:
+                    self.set_artwork(result_url, "")
                     xbmc.log(
                         "Lyrion: could not create blurred artwork: {}".format(error),
                         xbmc.LOGWARNING,
                     )
 
-        if (
-            artwork_url
-            and artwork_url != self.blur_completed_url
-            and (self.blur_thread is None or not self.blur_thread.is_alive())
-        ):
-            cache_dir = xbmcvfs.translatePath(
-                "special://profile/addon_data/plugin.audio.lyrion/blurred-artwork"
-            )
-            if not xbmcvfs.exists(cache_dir) and not xbmcvfs.mkdirs(cache_dir):
-                raise RuntimeError("Could not create the blurred artwork cache.")
-            image_name = hashlib.sha256(
-                artwork_url.encode("utf-8")
-            ).hexdigest() + ".jpg"
-            image_path = os.path.join(cache_dir, image_name)
-            if xbmcvfs.exists(image_path):
-                self.blur_completed_url = artwork_url
-                self.setProperty("BlurredArtwork", image_path)
-                return
+        if not artwork_url:
+            self.set_artwork("", "")
+            return
+        if artwork_url == self.blur_completed_url:
+            return
 
+        cache_dir = xbmcvfs.translatePath(
+            "special://profile/addon_data/plugin.audio.lyrion/blurred-artwork"
+        )
+        if not xbmcvfs.exists(cache_dir) and not xbmcvfs.mkdirs(cache_dir):
+            raise RuntimeError("Could not create the blurred artwork cache.")
+        image_name = hashlib.sha256(
+            artwork_url.encode("utf-8")
+        ).hexdigest() + ".jpg"
+        image_path = os.path.join(cache_dir, image_name)
+        if xbmcvfs.exists(image_path):
+            self.blur_completed_url = artwork_url
+            self.set_artwork(artwork_url, image_path)
+            return
+
+        if self.blur_thread is None or not self.blur_thread.is_alive():
             self.blur_thread = threading.Thread(
                 target=self.create_blurred_artwork_worker,
                 args=(artwork_url, image_path),
@@ -749,6 +751,10 @@ class LyrionWindow(xbmcgui.WindowXML):
                 daemon=True,
             )
             self.blur_thread.start()
+
+    def set_artwork(self, artwork_url, backdrop_path):
+        self.setProperty("Artwork", artwork_url)
+        self.setProperty("BlurredArtwork", backdrop_path)
 
     def create_blurred_artwork_worker(self, artwork_url, image_path):
         error = None
@@ -1171,7 +1177,6 @@ class LyrionWindow(xbmcgui.WindowXML):
         else:
             self.progress_fill.setVisible(False)
         artwork_url = self.client.artwork_url(current)
-        self.setProperty("Artwork", artwork_url)
         self.update_blurred_artwork(artwork_url)
         visible_tracks = sorted(self.playlist_tracks.items())
         snapshot = [

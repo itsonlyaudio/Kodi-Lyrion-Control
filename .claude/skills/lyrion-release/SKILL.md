@@ -23,7 +23,7 @@ Only do this when the user explicitly says to commit, push, or release. Small ch
 
 1. Commit only the changed files by name. Use a message that explains why. End it with the attribution line from the current session instructions (for example `Co-Authored-By: Claude Haiku 5.5 <noreply@anthropic.com>`).
 2. Push `main`.
-3. Build the release ZIP from the commit with `git archive --format=zip --prefix=plugin.audio.lyrion/ -o <out> HEAD -- . ':(exclude)plugin.audio.lyrion-1.4.12-kodi21.zip'`. The old 1.4.12 ZIP is tracked, and the release ZIP should not contain it.
+3. Build the release ZIP from the commit with `git archive --format=zip --prefix=plugin.audio.lyrion/ -o <out> HEAD`.
 4. Create tag `v<version>` and a GitHub release named `<version>` with `gh release create`, attaching the ZIP. Pass `--target <commit>`.
 5. Use this release body:
 
